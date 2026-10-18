@@ -32,7 +32,16 @@ export default function App() {
   useEffect(() => { window.scrollTo(0, 0); }, [page]);
   useEffect(() => { setProfile(blankProfile()); }, [backend.session?.user.id]);
   useEffect(() => {
-    if (backend.profile) setProfile(old => ({ ...old, name: backend.profile.display_name || '' }));
+    if (backend.profile) setProfile(old => ({
+      ...old,
+      name: backend.profile.display_name || '',
+      bio: backend.profile.bio || '',
+      interests: backend.profile.interests || [],
+      availability: backend.profile.availability_visibility || 'private',
+      showInterests: backend.profile.show_interests ?? true,
+      workSocial: backend.profile.work_social ?? false,
+      username: backend.profile.username || '',
+    }));
   }, [backend.profile]);
   useEffect(() => {
     if (backend.session && sessionStorage.getItem('moment:auth-return')) {
