@@ -52,7 +52,7 @@ export default function ProfileSetup({ profile, setProfile, theme, onFinish, liv
           </>}
           {step === 2 && <>
             <p className="description">Give your people a little glimpse of what makes you, you.</p>
-            <div className="profile-fields"><label htmlFor="display-name">What should we call you?</label><input id="display-name" placeholder="Your name" maxLength={60} value={profile.name} onChange={event => update('name', event.target.value)} /><label htmlFor="bio">A little about you <span className="optional">(optional)</span></label><textarea id="bio" rows={2} maxLength={180} placeholder="Always up for coffee and a very long walk." value={profile.bio} onChange={event => update('bio', event.target.value)} /></div>
+            <div className="profile-fields"><label htmlFor="display-name">What should we call you?</label><input id="display-name" placeholder="Your name" maxLength={60} value={profile.name} onChange={event => update('name', event.target.value)} /><label htmlFor="username">Your unique username</label><input id="username" name="username" placeholder="e.g. sam.p" maxLength={30} value={profile.username || ''} onChange={event => update('username', event.target.value)} autoCapitalize="none" autoComplete="off" spellCheck={false} /><label htmlFor="bio">A little about you <span className="optional">(optional)</span></label><textarea id="bio" rows={2} maxLength={180} placeholder="Always up for coffee and a very long walk." value={profile.bio} onChange={event => update('bio', event.target.value)} /></div>
             <h3 className="interest-title">What would you like to make time for?</h3><div className="interest-chips">{choices.map(interest => <button key={interest} className={profile.interests.includes(interest) ? 'chosen' : ''} aria-pressed={profile.interests.includes(interest)} type="button" onClick={() => toggleInterest(interest)}>{profile.interests.includes(interest) ? '✓ ' : '+ '}{interest}</button>)}</div>
             <form className="custom-interest" onSubmit={addInterest}><label className="sr-only" htmlFor="custom-interest">Add your own interest</label><input id="custom-interest" placeholder="Something else?" maxLength={35} value={customInterest} onChange={event => setCustomInterest(event.target.value)} /><button className="secondary-button" type="submit" disabled={!customInterest.trim()}>Add</button></form>
             <div className="panel-actions"><button className="text-button" type="button" onClick={() => setStep(1)}>← Calendar</button><button className="primary-button" type="button" onClick={() => setStep(3)}>Sharing choices →</button></div>
@@ -63,12 +63,12 @@ export default function ProfileSetup({ profile, setProfile, theme, onFinish, liv
             <p className="privacy-note">Availability only. Event names, locations, and notes stay private.</p>
             <label className="toggle-row"><span><strong>Share my interests</strong><small>Let friends discover things you could do together.</small></span><input type="checkbox" checked={profile.showInterests} onChange={event => update('showInterests', event.target.checked)} /></label>
             <label className="toggle-row"><span><strong>Social connection at work</strong><small>{work ? 'Opt in to share interests with your work groups.' : 'Share interests with work groups, too. Entirely optional.'}</small></span><input type="checkbox" checked={profile.workSocial} onChange={event => update('workSocial', event.target.checked)} /></label>
-            <p className="inline-notice" role="status">{error || 'Sharing choices are a session-only preview. Backend access currently follows friendships and group membership.'}</p>
+            <p className="inline-notice" role="status">{error || 'Your sharing choices are saved to your profile when signed in.'}</p>
             <div className="panel-actions"><button className="text-button" type="button" onClick={() => setStep(2)}>← About you</button><button className="primary-button" type="button" disabled={pending} onClick={onFinish}>Open my calendar →</button></div>
           </>}
         </section>
       </div>
-      <p className="profile-footnote">Display names save to your profile when signed in. Other profile choices remain in this session.</p>
+      <p className="profile-footnote">Profile details and sharing choices save to your account when signed in.</p>
     </main>
   );
 }
