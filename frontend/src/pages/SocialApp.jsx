@@ -1,17 +1,25 @@
 import React, { useEffect, useState } from 'react';
 import AvailabilityCalendar from '../components/AvailabilityCalendar.jsx';
-import { people, groupColors } from '../data/demo.js';
+import { people as demoPeople, groupColors } from '../data/demo.js';
 import { isFree } from '../lib/availability.js';
 import { defaultTimeline, timelineSummary } from '../lib/workPolicy.js';
 import NoteEditor from './NoteEditor.jsx';
 import { comparisonMembers } from '../lib/comparison.js';
 
-const getPerson = id => people.find(person => person.id === id);
+
 function Avatar({ person, small = false }) { return <span className={`person-avatar ${small ? 'small-avatar' : ''}`} style={{ background: person?.color }} aria-label={person?.name ? `${person.name} avatar` : 'Your avatar'}>{person?.initials || 'You'}</span>; }
 function PageHeading({ eyebrow, title, children }) { return <div className="social-heading"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1></div>{children}</div>; }
 
-export default function SocialApp({ route, demo, setDemo, profile, setProfile, theme }) {
+export default function SocialApp({ route, demo, setDemo, profile, setProfile, theme, people = demoPeople, backend }) {
   const work = theme === 'work';
+  const [actionNotice, setActionNotice] = useState('');
+  const [sessionGroupColors, setGroupColors] = useState({});
+  const getPerson = id => people.find(person => person.id === id) || {
+    id, name: id === 'me' ? (profile.name || 'You') : 'Member', username: '', initials: '', bio: '', interests: [], note: '',
+  };
+  if (backend) demo = { ...demo, groups: demo.groups.map(group => ({
+    ...group, color: sessionGroupColors[group.id] || group.color,
+  })) };
   const drawerRef = React.useRef(null);
   const [navOpen, setNavOpen] = useState(false);
   const leaveRef = React.useRef(null);
@@ -43,7 +51,7 @@ export default function SocialApp({ route, demo, setDemo, profile, setProfile, t
   const unread = notifications.filter(item => item.status === 'pending').length;
   const friends = people.filter(person => demo.friends.includes(person.id));
   const group = activeGroups.find(item => item.id === id);
-  const person = getPerson(id);
+  const person = people.find(item => item.id === id);
   const friend = person && demo.friends.includes(person.id);
   const requestSent = person && demo.requests.includes(person.id);
   const coworkerGroup = person && demo.groups.find(item => item.mode === 'work' && item.joined && item.active.includes(person.id));
@@ -57,10 +65,20 @@ export default function SocialApp({ route, demo, setDemo, profile, setProfile, t
   function toggleComparison(personId) {
     setProfileSelections(previous => ({ ...previous, [id]: extraFriends.includes(personId) ? extraFriends.filter(item => item !== personId) : [...extraFriends, personId] }));
   }
-  function requestFriend(personId) {
+
+  async function requestFriend(personId) {
+    if (backend) {
+      const target = getPerson(personId);
+      await backend.perform(api => api.requestFriend(target.username));
+      return;
+    }
     setDemo(previous => ({ ...previous, requests: [...new Set([...previous.requests, personId])] }));
   }
-  function answerNotification(notification, accepted) {
+  async function answerNotification(notification, accepted) {
+    if (backend) {
+      await backend.perform(api => api.answer(notification, accepted));
+      return;
+    }
     setDemo(previous => ({
       ...previous,
       notifications: previous.notifications.map(item => item.id === notification.id ? { ...item, status: accepted ? 'accepted' : 'declined' } : item),
@@ -69,19 +87,48 @@ export default function SocialApp({ route, demo, setDemo, profile, setProfile, t
       groups: accepted && notification.type === 'group' ? previous.groups.map(item => item.id === notification.groupId ? { ...item, joined: true, active: [...new Set([...item.active, 'me'])], pending: item.pending.filter(member => member !== 'me') } : item) : previous.groups,
     }));
   }
-  function createGroup(event) {
+  async function createGroup(event) {
     event.preventDefault();
-    if (!newName.trim()) return;
-    if (work && timeline.endHour <= timeline.startHour) return;
+    if (!newName.trim() || (work && timeline.endHour <= timeline.startHour)) return;
+    if (backend) {
+      if (work) { setActionNotice('Work-group modes and sharing windows are not supported by the backend yet. Nothing was saved.'); return; }
+      const result = await backend.perform(api => api.createGroup(newName, invitees));
+      if (!result) return;
+      const { groupId, failedInvites } = result.data;
+      setGroupColors(old => ({ ...old, [groupId]: color }));
+      setActionNotice(failedInvites.length ? 'Group created, but some invitations failed. They were not sent.' : '');
+      setNewName(''); setInvitees([]);
+      window.location.hash = 'group/' + groupId;
+      return;
+    }
     const groupId = `group-${Date.now()}`;
     setDemo(previous => ({ ...previous, groups: [...previous.groups, { id: groupId, mode: theme, timeline: work ? { ...timeline } : undefined, name: newName.trim(), color, joined: true, active: ['me'], pending: invitees }] }));
     setNewName(''); setInvitees([]);
     window.location.hash = `group/${groupId}`;
   }
-  function leaveGroup() {
-    setDemo(previous => ({ ...previous, groups: previous.groups.map(item => item.id === group.id ? { ...item, joined: false, active: item.active.filter(memberId => memberId !== 'me') } : item) }));
+  async function leaveGroup() {
+    if (backend) {
+      const result = await backend.perform(api => api.leaveGroup(group.id, backend.session.user.id));
+      if (!result) { leaveRef.current?.close(); return; }
+    } else setDemo(previous => ({ ...previous, groups: previous.groups.map(item => item.id === group.id ? { ...item, joined: false, active: item.active.filter(memberId => memberId !== 'me') } : item) }));
     leaveRef.current?.close();
     window.location.hash = 'groups';
+  }
+  async function searchPeople(event) {
+    event.preventDefault();
+    setActionNotice('');
+    if (backend) {
+      try { await backend.search(query); }
+      catch (error) { setActionNotice(error.message); setSearched(false); return; }
+    }
+    setSearched(true);
+  }
+  function cancelRequest(personId) {
+    if (backend) { setActionNotice('Canceling friend requests is not supported by the backend yet. The request is unchanged.'); return; }
+    setDemo(previous => ({ ...previous, requests: previous.requests.filter(item => item !== personId) }));
+  }
+  function memberStatus(memberId) {
+    return backend ? inspectedSlot?.statuses?.[memberId] ?? null : isFree(memberId, inspectedSlot.day, inspectedSlot.hour);
   }
   function memberLink(memberId, pending = false) {
     const member = getPerson(memberId);
@@ -96,28 +143,28 @@ export default function SocialApp({ route, demo, setDemo, profile, setProfile, t
       <nav aria-label="Main navigation">{[['calendar','▦','My calendar'],['notifications','♧','Notifications'],['people','♡',work ? 'Company directory' : 'My people'],['groups','▤','My groups']].map(([path, icon, label]) => <a key={path} href={`#${path}`} aria-current={section === path || path === 'groups' && ['group','new-group'].includes(section) ? 'page' : undefined}><span aria-hidden="true">{icon}</span>{label}{path === 'notifications' && unread > 0 && <b className="notification-count">{unread}</b>}</a>)}</nav>
       <div className="sidebar-groups"><div><span>MY GROUPS</span><a href="#new-group" aria-label="Create a group">+</a></div>{activeGroups.map(item => <a key={item.id} href={`#group/${item.id}`}><i style={{ background: item.color }} />{item.name}</a>)}{!activeGroups.length && <p>No groups yet. Start a little circle.</p>}</div>
       <a className="sidebar-profile" href="#profile"><span className="person-avatar small-avatar">{profile.name?.slice(0,1) || 'E'}</span><span>{profile.name || 'Your profile'}<small>Edit profile & sharing</small></span></a>
-      <p className="demo-label">Interactive demo · sample people & availability. Changes reset on refresh.</p>
+      <p className="demo-label">{backend ? 'Connected to Supabase · unsupported preview settings stay in this session.' : 'Interactive demo · sample people & availability. Changes reset on refresh.'}</p>
     </>;
   return <main className="social-shell">
     <div className="mobile-navigation"><button className="secondary-button" type="button" aria-haspopup="dialog" aria-expanded={navOpen} aria-controls="mobile-navigation" onClick={() => { drawerRef.current?.showModal(); setNavOpen(true); }}>☰ <span>Menu</span></button><span>{work ? 'Work' : 'Social'} workspace</span></div>
     <aside className="social-sidebar desktop-sidebar">{sidebar}</aside>
     <dialog id="mobile-navigation" className="navigation-dialog" ref={drawerRef} aria-label="Navigation" onClose={() => setNavOpen(false)} onClick={event => { if (event.target === event.currentTarget || event.target.closest('a')) drawerRef.current?.close(); }}><div className="drawer-header"><strong>Navigation</strong><button className="secondary-button" aria-label="Close navigation" onClick={() => drawerRef.current?.close()}>×</button></div><div className="social-sidebar">{sidebar}</div></dialog>
     <dialog className="confirm-dialog" ref={leaveRef} aria-labelledby="leave-title"><h2 id="leave-title">Leave {group?.name}?</h2><p>You’ll lose access to this group’s availability. You’ll need a new invitation to rejoin.</p><div className="panel-actions"><button className="secondary-button" autoFocus onClick={() => leaveRef.current?.close()}>Stay in group</button><button className="primary-button" onClick={leaveGroup}>Leave group</button></div></dialog>
-    <div className="social-content">
-      {theme === 'work' && <p className="work-preview-banner">Work availability · shared windows only. Calendar data is simulated in this preview.</p>}
+    <div className="social-content">{(actionNotice || backend?.error || backend?.pending) && <p className="inline-notice" role="status">{actionNotice || backend?.error || 'Loading…'}</p>}
+      {theme === 'work' && <p className="work-preview-banner">Work availability · work-group policies are a preview until supported by the backend.</p>}
       {section === 'note' && (work ? <section className="surface"><h1>Activity notes are in Social mode.</h1><a href="#calendar">Back to calendar</a></section> : <NoteEditor profile={profile} setProfile={setProfile} />)}
       {section === 'calendar' && <>
         <PageHeading eyebrow={work ? 'AVAILABILITY OVERVIEW' : 'A LITTLE ROOM FOR GOOD THINGS'} title={work ? 'My workspace' : profile.name ? `Your time, ${profile.name}.` : 'Make room for a moment.'}><a className="secondary-button button-link" href="#profile">Edit my profile ↗</a></PageHeading>
-        <div className={`dashboard-layout ${work ? 'work-dashboard' : ''}`}><div><div className="sync-preview">○ Calendar connection pending <a href="#profile">Link your calendar →</a></div><AvailabilityCalendar title={noteMembers.length > 1 ? comparisonTitle(noteMembers) : 'My calendar'} memberIds={noteMembers} /></div>{!work && <aside className="activity-panel"><h2>This week, together</h2><p className="description">A reason to reach out. Take the conversation wherever you like.</p><a className="secondary-button button-link" href="#note">Write an activity note ↗</a>{profile.note && (!profile.noteExpiresAt || profile.noteExpiresAt > now) && <article className="wish-card"><small>YOUR NOTE · {profile.noteDuration === 'forever' ? 'UNTIL REMOVED' : profile.noteDuration === 'day' ? 'ONE DAY' : 'ONE WEEK'}</small><p>{profile.note}</p><a className="text-button" href="#note">Edit note →</a></article>}<div className="comparison-toolbar"><span>{noteSelections.length} selected</span><button className="text-button" disabled={!noteSelections.length} onClick={() => setNoteSelections([])}>Deselect all</button></div><p className="comparison-hint">Select friends to compare your free time. No group or invitation needed.</p><div className="friends-notes" aria-label="Friends activity notes">{friends.map(member => <article className={`wish-card ${noteSelections.includes(member.id) ? 'selected-note' : ''}`} key={member.id}><div className="note-person-row"><a href={`#person/${member.id}`}><Avatar person={member} small /><strong>{member.name.split(' ')[0]}</strong></a><input type="checkbox" aria-label={`Include ${member.name} in calendar comparison`} checked={noteSelections.includes(member.id)} onChange={() => toggleNote(member.id)} /></div><p>{member.note}</p><a className="text-button" href={`#person/${member.id}`}>Find time together →</a></article>)}</div></aside>}</div>
+        <div className={`dashboard-layout ${work ? 'work-dashboard' : ''}`}><div><div className="sync-preview">{backend?.session.provider_token ? '○ Calendar connected' : '○ Calendar connection pending'} <a href="#profile">Link your calendar →</a></div><AvailabilityCalendar title={noteMembers.length > 1 ? comparisonTitle(noteMembers) : 'My calendar'} memberIds={noteMembers} /></div>{!work && <aside className="activity-panel"><h2>This week, together</h2><p className="description">A reason to reach out. Take the conversation wherever you like.</p><a className="secondary-button button-link" href="#note">Write an activity note ↗</a>{profile.note && (!profile.noteExpiresAt || profile.noteExpiresAt > now) && <article className="wish-card"><small>YOUR NOTE · {profile.noteDuration === 'forever' ? 'UNTIL REMOVED' : profile.noteDuration === 'day' ? 'ONE DAY' : 'ONE WEEK'}</small><p>{profile.note}</p><a className="text-button" href="#note">Edit note →</a></article>}<div className="comparison-toolbar"><span>{noteSelections.length} selected</span><button className="text-button" disabled={!noteSelections.length} onClick={() => setNoteSelections([])}>Deselect all</button></div><p className="comparison-hint">Select friends to compare your free time. No group or invitation needed.</p><div className="friends-notes" aria-label="Friends activity notes">{friends.map(member => <article className={`wish-card ${noteSelections.includes(member.id) ? 'selected-note' : ''}`} key={member.id}><div className="note-person-row"><a href={`#person/${member.id}`}><Avatar person={member} small /><strong>{member.name.split(' ')[0]}</strong></a><input type="checkbox" aria-label={`Include ${member.name} in calendar comparison`} checked={noteSelections.includes(member.id)} onChange={() => toggleNote(member.id)} /></div><p>{member.note}</p><a className="text-button" href={`#person/${member.id}`}>Find time together →</a></article>)}</div></aside>}</div>
       </>}
       {section === 'people' && work && <section className="surface empty-state"><h1>Company directory</h1><p>Company-wide discovery is planned for a later version. For now, open a work group to view its members.</p><a className="primary-button button-link" href="#groups">Open work groups →</a></section>}
       {section === 'people' && !work && <>
         <PageHeading eyebrow="GOOD COMPANY" title="My people" />
-        <section className="surface search-panel"><h2>Find your person</h2><p className="description">Search an exact username to send a friend request.</p><form className="people-search" onSubmit={event => { event.preventDefault(); setSearched(true); }}><label className="sr-only" htmlFor="username-search">Exact username</label><input id="username-search" placeholder="e.g. sam.p" value={query} onChange={event => { setQuery(event.target.value); setSearched(false); }} required /><button className="primary-button" type="submit">Find person</button></form><small className="demo-label">Demo usernames: sam.p · jules.p · alex.m</small>{searched && (() => {
+        <section className="surface search-panel"><h2>Find your person</h2><p className="description">Search an exact username to send a friend request.</p><form className="people-search" onSubmit={searchPeople}><label className="sr-only" htmlFor="username-search">Exact username</label><input id="username-search" placeholder="e.g. sam.p" value={query} onChange={event => { setQuery(event.target.value); setSearched(false); }} required /><button className="primary-button" type="submit">Find person</button></form><small className="demo-label">{backend ? 'Enter the exact username of a registered user.' : 'Demo usernames: sam.p · jules.p · alex.m'}</small>{searched && (() => {
           const match = people.find(member => member.username.toLowerCase() === query.trim().replace(/^@/, '').toLowerCase());
-          return match ? <div className="search-result"><a href={`#person/${match.id}`}><Avatar person={match} small />@{match.username}</a>{demo.friends.includes(match.id) ? <span className="badge">Already friends</span> : <button className="secondary-button" disabled={demo.requests.includes(match.id)} onClick={() => requestFriend(match.id)}>{demo.requests.includes(match.id) ? 'Request sent' : 'Send friend request'}</button>}</div> : <p role="status" className="inline-notice">No exact match. Try one of the demo usernames above.</p>;
+          return match ? <div className="search-result"><a href={`#person/${match.id}`}><Avatar person={match} small />@{match.username}</a>{demo.friends.includes(match.id) ? <span className="badge">Already friends</span> : <button className="secondary-button" disabled={demo.requests.includes(match.id)} onClick={() => requestFriend(match.id)}>{demo.requests.includes(match.id) ? 'Request sent' : 'Send friend request'}</button>}</div> : <p role="status" className="inline-notice">{backend ? 'No exact match found.' : 'No exact match. Try one of the demo usernames above.'}</p>;
         })()}</section>
-        <h2 className="section-subtitle">Your friends <span>{friends.length}</span></h2><div className="people-grid">{friends.map(personCard)}</div>{demo.requests.length > 0 && <section className="surface"><h2>Sent requests</h2>{demo.requests.map(personId => <div className="search-result" key={personId}><span>@{getPerson(personId).username}</span><button className="text-button" onClick={() => setDemo(previous => ({ ...previous, requests: previous.requests.filter(item => item !== personId) }))}>Cancel request</button></div>)}</section>}
+        <h2 className="section-subtitle">Your friends <span>{friends.length}</span></h2><div className="people-grid">{friends.map(personCard)}</div>{demo.requests.length > 0 && <section className="surface"><h2>Sent requests</h2>{demo.requests.map(personId => <div className="search-result" key={personId}><span>@{getPerson(personId).username}</span><button className="text-button" onClick={() => cancelRequest(personId)}>Cancel request</button></div>)}</section>}
       </>}
       {section === 'groups' && <>
         <PageHeading eyebrow={work ? 'COLLABORATION' : 'YOUR CIRCLES'} title={work ? 'My work groups' : 'My groups'}><a className="primary-button button-link" href="#new-group">+ Create a group</a></PageHeading>
@@ -139,7 +186,7 @@ export default function SocialApp({ route, demo, setDemo, profile, setProfile, t
         <PageHeading eyebrow={work ? 'TEAM AVAILABILITY' : 'A MOMENT FOR EVERYONE'} title={group.name}><a href="#groups" className="text-button">← All groups</a></PageHeading>
         <div className="group-calendar-layout"><section className="surface group-members"><h2>Whose time?</h2><p className="privacy-note">Hover, focus, or tap a time to see who is free. Your member selection stays the same.</p>{inspectedSlot && <p className="inspected-time">{inspectedSlot.day.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} · {String(Math.floor(inspectedSlot.hour)).padStart(2, '0')}:{inspectedSlot.hour % 1 ? '30' : '00'}</p>}<div className="member-selection-actions"><button className="text-button" onClick={() => setSelectedByGroup(previous => ({ ...previous, [group.id]: [...group.active] }))}>Select all</button><button className="text-button" onClick={() => setSelectedByGroup(previous => ({ ...previous, [group.id]: [] }))}>Clear</button></div>{group.active.map(memberId => {
           const selected = selectedByGroup[group.id] ?? group.active;
-          return <div className={`member-checkbox-row ${inspectedSlot && !isFree(memberId, inspectedSlot.day, inspectedSlot.hour) ? 'member-busy' : ''}`} key={memberId}><input aria-label={`Show ${memberId === 'me' ? 'your' : getPerson(memberId).name + '’s'} availability`} type="checkbox" checked={selected.includes(memberId)} onChange={() => setSelectedByGroup(previous => ({ ...previous, [group.id]: selected.includes(memberId) ? selected.filter(item => item !== memberId) : [...selected, memberId] }))} />{memberLink(memberId)}{inspectedSlot && <small className="member-availability">{isFree(memberId, inspectedSlot.day, inspectedSlot.hour) ? 'Free' : 'Busy'}</small>}</div>;
+          return <div className={`member-checkbox-row ${inspectedSlot && memberStatus(memberId) === false ? 'member-busy' : ''}`} key={memberId}><input aria-label={`Show ${memberId === 'me' ? 'your' : getPerson(memberId).name + '’s'} availability`} type="checkbox" checked={selected.includes(memberId)} onChange={() => setSelectedByGroup(previous => ({ ...previous, [group.id]: selected.includes(memberId) ? selected.filter(item => item !== memberId) : [...selected, memberId] }))} />{memberLink(memberId)}{inspectedSlot && <small className="member-availability">{memberStatus(memberId) === null ? 'Unknown' : memberStatus(memberId) ? 'Free' : 'Busy'}</small>}</div>;
         })}<h3>Invited · {group.pending.length}</h3><p className="privacy-note">Not included in availability until they join.</p><div className="member-list">{group.pending.map(memberId => memberLink(memberId, true))}</div><p className="privacy-note">Members can view each other’s availability. Event names stay private.</p><button className="text-button" onClick={() => leaveRef.current?.showModal()}>Leave group</button></section><AvailabilityCalendar key={group.id} title="Group availability" memberIds={(selectedByGroup[group.id] ?? group.active).filter(memberId => group.active.includes(memberId))} color={group.color} timeline={group.timeline} onInspect={setInspectedSlot} /></div>
       </> : <section className="surface empty-state"><h1>This group isn’t in your circles.</h1><a href="#groups">Back to my groups</a></section>)}
       {section === 'person' && (person ? <>

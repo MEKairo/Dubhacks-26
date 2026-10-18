@@ -1,10 +1,12 @@
-﻿import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import MomentLogo from '../components/MomentLogo.jsx';
 import { pacificToday } from '../lib/dates.js';
 import { addDays, startOfWeek } from '../lib/availability.js';
 
-export default function Welcome({ theme, onContinue }) {
+export default function Welcome({ theme, onContinue, onExplore }) {
   const [opened, setOpened] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [notice, setNotice] = useState('');
   const [mode, setMode] = useState('signup');
   const emailRef = useRef(null);
   const work = theme === 'work';
@@ -28,13 +30,20 @@ export default function Welcome({ theme, onContinue }) {
             <h1>{mode === 'login' ? 'Welcome back.' : 'Your people. Your moment.'}</h1>
             <p className="description">{work ? 'Bring your calendars together. Find time to do great work.' : 'Good things happen when we make time for each other.'}</p>
             <div className="auth-tabs" aria-label="Account options">{['signup', 'login'].map(value => <button key={value} type="button" className={mode === value ? 'active' : ''} aria-pressed={mode === value} onClick={() => setMode(value)}>{value === 'signup' ? 'Sign up' : 'Log in'}</button>)}</div>
-            <form onSubmit={event => { event.preventDefault(); onContinue(mode); }}>
-              <label htmlFor="email">Email address</label><input ref={emailRef} id="email" type="email" placeholder="you@somewhere.com" autoComplete="email" required />
-              <label htmlFor="password">Password</label><input id="password" type="password" placeholder="At least 8 characters" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} minLength={8} required />
-              <button className="primary-button" type="submit">{mode === 'signup' ? 'Create account & set up profile' : 'Open my calendar'} <span aria-hidden="true">→</span></button>
+            <form onSubmit={async event => {
+              event.preventDefault();
+              const values = new FormData(event.currentTarget);
+              setPending(true); setNotice('');
+              try { setNotice(await onContinue(mode, values.get('email'), values.get('password')) || ''); }
+              catch (error) { setNotice(error.message); }
+              finally { setPending(false); }
+            }}>
+              <label htmlFor="email">Email address</label><input ref={emailRef} id="email" name="email" type="email" placeholder="you@somewhere.com" autoComplete="email" required />
+              <label htmlFor="password">Password</label><input id="password" name="password" type="password" placeholder="At least 8 characters" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} minLength={8} required />
+              <button className="primary-button" type="submit" disabled={pending}>{mode === 'signup' ? 'Create account & set up profile' : 'Open my calendar'} <span aria-hidden="true">→</span></button>
             </form>
-            <p className="preview-note">Frontend preview · no account is created or password saved.</p>
-            <button className="text-button" type="button" onClick={() => onContinue(mode)}>{mode === 'login' ? 'Explore the calendar →' : 'Explore profile setup →'}</button>
+            <p className="preview-note" role="status">{notice || (pending ? 'Signing in…' : 'Sign in securely, or explore the frontend preview below.')}</p>
+            <button className="text-button" type="button" onClick={() => onExplore(mode)}>{mode === 'login' ? 'Explore the calendar →' : 'Explore profile setup →'}</button>
             <button className="text-button back-cover" type="button" onClick={() => setOpened(false)}>← Back to the cover</button>
           </div>
           <div className="calendar-cover" aria-hidden={opened} inert={opened ? true : undefined}>
