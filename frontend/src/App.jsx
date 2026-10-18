@@ -13,7 +13,7 @@ const currentPage = () => {
   const route = window.location.hash.slice(1);
   return /^(welcome|profile|calendar|note|people|notifications|groups|new-group|group\/[^/]+|person\/[^/]+)$/.test(route) ? route : 'welcome';
 };
-const blankProfile = () => ({ name: '', bio: '', interests: [], availability: 'groups', showInterests: true,
+const blankProfile = () => ({ name: '', username: '', bio: '', interests: [], availability: 'private', showInterests: true,
   workSocial: false, note: '', noteDuration: 'week', noteExpiresAt: null });
 
 export default function App() {
@@ -41,6 +41,9 @@ export default function App() {
       showInterests: backend.profile.show_interests ?? true,
       workSocial: backend.profile.work_social ?? false,
       username: backend.profile.username || '',
+      note: backend.profile.note || '',
+      noteDuration: backend.profile.noteDuration || 'week',
+      noteExpiresAt: backend.profile.noteExpiresAt || null,
     }));
   }, [backend.profile]);
   useEffect(() => {
@@ -60,6 +63,10 @@ export default function App() {
     return '';
   }
   async function finishProfile() {
+    if (live && !/^[A-Za-z0-9._-]{3,30}$/.test((profile.username || '').trim())) {
+      window.alert('Choose a unique username (3–30 letters, numbers, dots, underscores or hyphens).');
+      return;
+    }
     if (!live) { window.location.hash = 'calendar'; return; }
     const result = await backend.perform(api => api.saveProfile(backend.session.user.id, profile));
     if (result) window.location.hash = 'calendar';
