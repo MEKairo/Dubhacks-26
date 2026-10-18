@@ -29,7 +29,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   --line: #b9a5c3;
   --shadow: #c5b6d0;
   --mark: #eed9df;
-  --logo-font: 'Pacifico', cursive;
+  --logo-font: 'Pixelify Sans', monospace;
   --display-font: 'Pixelify Sans', monospace;
   color: var(--ink);
   background: var(--desktop);
@@ -401,17 +401,14 @@ select:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
 
 /* Smooth paper lift: curl toward the viewer, detach, then drift down. */
 .calendar-cover { transform-origin: 50% 0; }
-.is-open .calendar-cover { animation: lift-and-tear 1.1s cubic-bezier(.28,.05,.32,1) forwards; }
+.is-open .calendar-cover { animation: lift-and-tear .9s cubic-bezier(.32,0,.38,1) forwards; }
 @keyframes lift-and-tear {
-  0% { transform: translate3d(0,0,0) rotateX(0); opacity: 1; }
-  28% { transform: translate3d(0,-8px,30px) rotateX(28deg); box-shadow: 0 22px 28px #00000020; opacity: 1; }
-  48% { transform: translate3d(0,8px,65px) rotateX(35deg) rotate(-1deg); box-shadow: 0 30px 36px #00000025; opacity: 1; }
-  72% { transform: translate3d(-8px,155px,90px) rotateX(20deg) rotate(-3deg); opacity: .95; }
-  100% { transform: translate3d(-20px,680px,110px) rotateX(8deg) rotate(-5deg); opacity: 0; visibility: hidden; }
+  from { transform: translate3d(0,0,0) rotateX(0) rotate(0); opacity: 1; }
+  to { transform: translate3d(-15px,620px,100px) rotateX(55deg) rotate(-4deg); opacity: 0; visibility: hidden; }
 }
 /* Work uses clean typography and flat, functional surfaces. */
 .theme-work { --display-font: 'DM Sans', sans-serif; --logo-font: 'DM Sans', sans-serif; background-image: none; }
-.theme-work .moment-logo { font-weight: 700; letter-spacing: -1.6px; }
+.theme-work .moment-logo { font-weight: 500; letter-spacing: -.8px; }
 .theme-work .logo-large { font-size: clamp(60px, 10vw, 88px); letter-spacing: -5px; text-shadow: none; }
 .theme-work .social-heading h1, .theme-work .calendar-top h2, .theme-work .setup-panel > h2, .theme-work .profile-heading h1 { font-weight: 600; }
 .theme-work .social-heading h1 { font-size: 28px; }
@@ -547,3 +544,7 @@ select:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
   .app .theme-picker input[type=color] { width: 28px; }
   .calendar-zoom { margin-top: 8px; }
 }
+/* Logo spacing and a crisp raised minimize mark. */
+.theme-social .moment-logo { font-weight: 500; letter-spacing: -.7px; }
+.theme-social .logo-large { letter-spacing: -3px; text-shadow: 2px 2px var(--shadow); }
+.window-controls .minimize-control i { width: 9px; height: 2px; background: currentColor; transform: translateY(3px); }

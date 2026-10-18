@@ -1,21 +1,25 @@
 ﻿import React, { useEffect, useRef, useState } from 'react';
 import MomentLogo from '../components/MomentLogo.jsx';
+import { pacificToday } from '../lib/dates.js';
+import { addDays, startOfWeek } from '../lib/availability.js';
 
 export default function Welcome({ theme, onContinue }) {
   const [opened, setOpened] = useState(false);
   const [mode, setMode] = useState('signup');
   const emailRef = useRef(null);
   const work = theme === 'work';
+  const today = pacificToday();
+  const weekStart = startOfWeek(today);
   useEffect(() => {
     if (!opened) return;
-    const timer = setTimeout(() => emailRef.current?.focus(), 1100);
+    const timer = setTimeout(() => emailRef.current?.focus(), 900);
     return () => clearTimeout(timer);
   }, [opened]);
 
   return (
     <main className="welcome-stage">
       <section className="calendar-window" aria-label="Moment welcome calendar">
-        <div className="window-bar"><span>▦ &nbsp; moment{work ? ' / welcome' : '.exe'}</span><div className="window-controls" aria-hidden="true"><span>_</span><span>□</span><span>×</span></div></div>
+        <div className="window-bar"><span>▦ &nbsp; moment</span><div className="window-controls" aria-hidden="true"><span className="minimize-control"><i /></span><span>□</span><span>×</span></div></div>
         <div className={`calendar-body ${opened ? 'is-open' : ''}`}>
           <div className="binder-rings" aria-hidden="true">{[0,1,2,3,4,5].map(n => <span key={n} />)}</div>
           <div className="paper-stub" aria-hidden="true" />
@@ -39,7 +43,11 @@ export default function Welcome({ theme, onContinue }) {
               <p className="eyebrow">{work ? 'LESS BACK-AND-FORTH. MORE TIME TOGETHER.' : 'LESS “WE SHOULD HANG OUT.”'}</p>
               <h1><MomentLogo large /></h1>
               <p className="cover-description">{work ? <>Shared schedules. Better teamwork.<br />Find the moment that works for everyone.</> : <>More “see you there.”<br />Make room for your favorite people.</>}</p>
-              <div className="tiny-week" aria-hidden="true">{['M','T','W','T','F','S','S'].map((day, i) => <span key={i} className={i === 4 ? 'marked-day' : ''}>{day}<b>{i === 4 ? (work ? '✓' : '♡') : i + 12}</b></span>)}</div>
+              <div className="tiny-week" aria-label="This week">{['M','T','W','T','F','S','S'].map((day, i) => {
+                const date = addDays(weekStart, i);
+                const isToday = date.toDateString() === today.toDateString();
+                return <span key={i} className={isToday ? 'marked-day' : ''} aria-current={isToday ? 'date' : undefined} aria-label={`${date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}${isToday ? ', today' : ''}`}>{day}<b>{date.getDate()}</b></span>;
+              })}</div>
               <button className="primary-button open-button" type="button" onClick={() => setOpened(true)}>Let’s find the time.</button>
             </div>
             <div className="cover-rule" aria-hidden="true" />
