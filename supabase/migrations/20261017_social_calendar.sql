@@ -1,178 +1,521 @@
--- Run AFTER the profiles SQL already applied in Supabase.
--- Each group is a row in groups, not a separate database table.
-create extension if not exists pgcrypto;
+-- ============================================================
+-- DUBHACKS 2026: FRIENDS, GROUPS, AND CALENDAR AVAILABILITY
+-- Run AFTER the profiles table has been created.
+-- Keep the existing profiles table.
+-- ============================================================
 
-create table if not exists public.friendships (
-  id uuid primary key default gen_random_uuid(),
-  requester_id uuid not null references public.profiles(id) on delete cascade,
-  addressee_id uuid not null references public.profiles(id) on delete cascade,
-  status text not null default 'pending' check (status in ('pending','accepted','rejected')),
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  constraint distinct_friends check (requester_id <> addressee_id)
-);
-create unique index if not exists friendships_pair_unique
-  on public.friendships (least(requester_id, addressee_id), greatest(requester_id, addressee_id));
-create index if not exists friendships_addressee_idx on public.friendships(addressee_id, status);
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
-create table if not exists public.groups (
-  id uuid primary key default gen_random_uuid(),
-  name text not null check (char_length(trim(name)) between 1 and 80),
-  owner_id uuid not null references public.profiles(id) on delete cascade,
-  created_at timestamptz not null default now()
-);
-create table if not exists public.group_members (
-  group_id uuid not null references public.groups(id) on delete cascade,
-  user_id uuid not null references public.profiles(id) on delete cascade,
-  joined_at timestamptz not null default now(),
-  primary key (group_id, user_id)
-);
-create index if not exists group_members_user_idx on public.group_members(user_id);
+-- ============================================================
+-- 1. FRIENDSHIPS
+-- ============================================================
 
--- Only busy intervals are stored. Never persist event names, descriptions, locations or attendees.
-create table if not exists public.busy_slots (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references public.profiles(id) on delete cascade,
-  starts_at timestamptz not null,
-  ends_at timestamptz not null,
-  created_at timestamptz not null default now(),
-  constraint valid_busy_slot check (ends_at > starts_at)
-);
-create index if not exists busy_slots_user_time_idx on public.busy_slots(user_id, starts_at, ends_at);
-
--- SECURITY DEFINER avoids recursive RLS checks while verifying shared-group access.
-create or replace function public.are_friends(a uuid, b uuid)
-returns boolean language sql stable security definer set search_path = ''
-as $$
-  select exists (
-    select 1 from public.friendships f
-    where f.status = 'accepted'
-      and ((f.requester_id = a and f.addressee_id = b)
-        or (f.requester_id = b and f.addressee_id = a))
-  );
-$$;
-
-create or replace function public.shares_group(a uuid, b uuid)
-returns boolean language sql stable security definer set search_path = ''
-as $$
-  select exists (
-    select 1 from public.group_members x
-    join public.group_members y on y.group_id = x.group_id
-    where x.user_id = a and y.user_id = b
-  );
-$$;
-
-create or replace function public.is_group_member(g uuid, u uuid)
-returns boolean language sql stable security definer set search_path = ''
-as $$
-  select exists(select 1 from public.group_members where group_id = g and user_id = u);
-$$;
-
--- Friendship state changes are controlled by RPCs, not direct client UPDATEs.
-create or replace function public.send_friend_request(target_username text)
-returns uuid language plpgsql security definer set search_path = ''
-as $$
-declare target_id uuid; friendship_id uuid;
-begin
-  if auth.uid() is null then raise exception 'Sign in required'; end if;
-  select id into target_id from public.profiles
-    where lower(username) = lower(trim(target_username)) limit 1;
-  if target_id is null then raise exception 'User not found'; end if;
-  if target_id = auth.uid() then raise exception 'Cannot friend yourself'; end if;
-  insert into public.friendships(requester_id, addressee_id)
-  values (auth.uid(), target_id)
-  returning id into friendship_id;
-  return friendship_id;
-exception when unique_violation then
-  raise exception 'Friend request already exists';
-end;
-$$;
-
-create or replace function public.respond_friend_request(request_id uuid, accept_request boolean)
-returns void language plpgsql security definer set search_path = ''
-as $$
-begin
-  update public.friendships
-  set status = case when accept_request then 'accepted' else 'rejected' end,
-      updated_at = now()
-  where id = request_id and addressee_id = auth.uid() and status = 'pending';
-  if not found then raise exception 'Pending request not found'; end if;
-end;
-$$;
-
-create or replace function public.create_group(group_name text)
-returns uuid language plpgsql security definer set search_path = ''
-as $$
-declare new_id uuid;
-begin
-  if auth.uid() is null then raise exception 'Sign in required'; end if;
-  insert into public.groups(name, owner_id) values (group_name, auth.uid())
-  returning id into new_id;
-  insert into public.group_members(group_id, user_id) values (new_id, auth.uid());
-  return new_id;
-end;
-$$;
-
-create or replace function public.add_group_member(target_group uuid, target_user uuid)
-returns void language plpgsql security definer set search_path = ''
-as $$
-begin
-  if not exists(select 1 from public.groups where id = target_group and owner_id = auth.uid())
-  then raise exception 'Only the group owner can add members'; end if;
-  if not public.are_friends(auth.uid(), target_user)
-  then raise exception 'Add this person as a friend first'; end if;
-  insert into public.group_members(group_id, user_id)
-  values (target_group, target_user) on conflict do nothing;
-end;
-$$;
-
-create or replace function public.remove_group_member(target_group uuid, target_user uuid)
-returns void language plpgsql security definer set search_path = ''
-as $$
-begin
-  if target_user <> auth.uid() and not exists(
-    select 1 from public.groups where id = target_group and owner_id = auth.uid()
-  ) then raise exception 'Not authorized'; end if;
-  if exists(select 1 from public.groups where id = target_group and owner_id = target_user)
-  then raise exception 'Owner must delete the group instead'; end if;
-  delete from public.group_members where group_id = target_group and user_id = target_user;
-end;
-$$;
-
-alter table public.friendships enable row level security;
-alter table public.groups enable row level security;
-alter table public.group_members enable row level security;
-alter table public.busy_slots enable row level security;
-
-create policy "participants read friendships" on public.friendships for select to authenticated
-using (auth.uid() in (requester_id, addressee_id));
-create policy "members read groups" on public.groups for select to authenticated
-using (public.is_group_member(id, auth.uid()));
-create policy "owners edit groups" on public.groups for update to authenticated
-using (owner_id = auth.uid()) with check (owner_id = auth.uid());
-create policy "owners delete groups" on public.groups for delete to authenticated
-using (owner_id = auth.uid());
-create policy "members read membership" on public.group_members for select to authenticated
-using (public.is_group_member(group_id, auth.uid()));
-create policy "allowed users read busy slots" on public.busy_slots for select to authenticated
-using (
-  user_id = auth.uid()
-  or public.are_friends(auth.uid(), user_id)
-  or public.shares_group(auth.uid(), user_id)
+CREATE TABLE IF NOT EXISTS public.friendships (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    requester_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    addressee_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'accepted', 'rejected')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT distinct_friends CHECK (requester_id <> addressee_id)
 );
 
--- No direct INSERT/UPDATE/DELETE policies on friendships, members or busy_slots.
--- Only vetted SECURITY DEFINER RPCs or the service-role sync function can write.
-revoke all on public.friendships, public.groups, public.group_members, public.busy_slots from anon;
-grant select on public.friendships, public.groups, public.group_members, public.busy_slots to authenticated;
-grant update, delete on public.groups to authenticated;
-revoke all on function public.are_friends(uuid,uuid), public.shares_group(uuid,uuid),
-  public.is_group_member(uuid,uuid) from public;
-grant execute on function public.are_friends(uuid,uuid), public.shares_group(uuid,uuid),
-  public.is_group_member(uuid,uuid) to authenticated;
-revoke all on function public.send_friend_request(text), public.respond_friend_request(uuid,boolean),
-  public.create_group(text), public.add_group_member(uuid,uuid),
-  public.remove_group_member(uuid,uuid) from public;
-grant execute on function public.send_friend_request(text), public.respond_friend_request(uuid,boolean),
-  public.create_group(text), public.add_group_member(uuid,uuid),
-  public.remove_group_member(uuid,uuid) to authenticated;
+CREATE UNIQUE INDEX IF NOT EXISTS friendships_pair_unique
+ON public.friendships (
+    LEAST(requester_id, addressee_id),
+    GREATEST(requester_id, addressee_id)
+);
+
+CREATE INDEX IF NOT EXISTS friendships_addressee_idx
+ON public.friendships(addressee_id, status);
+
+-- ============================================================
+-- 2. GROUPS
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS public.groups (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL CHECK (CHAR_LENGTH(TRIM(name)) BETWEEN 1 AND 80),
+    owner_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
+-- 3. GROUP MEMBERS
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS public.group_members (
+    group_id UUID NOT NULL REFERENCES public.groups(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (group_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS group_members_user_idx
+ON public.group_members(user_id);
+
+-- ============================================================
+-- 4. GROUP INVITATIONS
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS public.group_invitations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    group_id UUID NOT NULL REFERENCES public.groups(id) ON DELETE CASCADE,
+    inviter_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    invitee_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'accepted', 'declined')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    responded_at TIMESTAMPTZ,
+    UNIQUE (group_id, invitee_id)
+);
+
+CREATE INDEX IF NOT EXISTS group_invitations_invitee_idx
+ON public.group_invitations(invitee_id, status);
+
+-- ============================================================
+-- 5. BUSY SLOTS
+-- Store only busy intervals, never event details.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS public.busy_slots (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    starts_at TIMESTAMPTZ NOT NULL,
+    ends_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT valid_busy_slot CHECK (ends_at > starts_at)
+);
+
+CREATE INDEX IF NOT EXISTS busy_slots_user_time_idx
+ON public.busy_slots(user_id, starts_at, ends_at);
+
+-- ============================================================
+-- 6. HELPER FUNCTIONS
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION public.are_friends(a UUID, b UUID)
+RETURNS BOOLEAN
+LANGUAGE SQL STABLE SECURITY DEFINER
+SET search_path = ''
+AS $$
+    SELECT EXISTS (
+        SELECT 1
+        FROM public.friendships f
+        WHERE f.status = 'accepted'
+        AND (
+            (f.requester_id = a AND f.addressee_id = b)
+            OR
+            (f.requester_id = b AND f.addressee_id = a)
+        )
+    );
+$$;
+
+CREATE OR REPLACE FUNCTION public.shares_group(a UUID, b UUID)
+RETURNS BOOLEAN
+LANGUAGE SQL STABLE SECURITY DEFINER
+SET search_path = ''
+AS $$
+    SELECT EXISTS (
+        SELECT 1
+        FROM public.group_members x
+        JOIN public.group_members y
+            ON x.group_id = y.group_id
+        WHERE x.user_id = a
+        AND y.user_id = b
+    );
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_group_member(g UUID, u UUID)
+RETURNS BOOLEAN
+LANGUAGE SQL STABLE SECURITY DEFINER
+SET search_path = ''
+AS $$
+    SELECT EXISTS (
+        SELECT 1
+        FROM public.group_members
+        WHERE group_id = g
+        AND user_id = u
+    );
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_group_invitee(g UUID, u UUID)
+RETURNS BOOLEAN
+LANGUAGE SQL STABLE SECURITY DEFINER
+SET search_path = ''
+AS $$
+    SELECT EXISTS (
+        SELECT 1
+        FROM public.group_invitations
+        WHERE group_id = g
+        AND invitee_id = u
+    );
+$$;
+
+-- ============================================================
+-- 7. FRIEND REQUESTS
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION public.send_friend_request(
+    target_username TEXT
+)
+RETURNS UUID
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+    target_id UUID;
+    friendship_id UUID;
+BEGIN
+    IF auth.uid() IS NULL THEN
+        RAISE EXCEPTION 'Sign in required';
+    END IF;
+
+    SELECT id INTO target_id
+    FROM public.profiles
+    WHERE LOWER(username) = LOWER(TRIM(target_username))
+    LIMIT 1;
+
+    IF target_id IS NULL THEN
+        RAISE EXCEPTION 'User not found';
+    END IF;
+
+    IF target_id = auth.uid() THEN
+        RAISE EXCEPTION 'Cannot friend yourself';
+    END IF;
+
+    INSERT INTO public.friendships(requester_id, addressee_id)
+    VALUES (auth.uid(), target_id)
+    RETURNING id INTO friendship_id;
+
+    RETURN friendship_id;
+
+EXCEPTION WHEN unique_violation THEN
+    RAISE EXCEPTION 'Friend request already exists';
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.respond_friend_request(
+    request_id UUID,
+    accept_request BOOLEAN
+)
+RETURNS VOID
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = ''
+AS $$
+BEGIN
+    UPDATE public.friendships
+    SET status = CASE
+            WHEN accept_request THEN 'accepted'
+            ELSE 'rejected'
+        END,
+        updated_at = NOW()
+    WHERE id = request_id
+    AND addressee_id = auth.uid()
+    AND status = 'pending';
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Pending request not found';
+    END IF;
+END;
+$$;
+
+-- ============================================================
+-- 8. CREATE GROUP
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION public.create_group(
+    group_name TEXT
+)
+RETURNS UUID
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+    new_id UUID;
+BEGIN
+    IF auth.uid() IS NULL THEN
+        RAISE EXCEPTION 'Sign in required';
+    END IF;
+
+    INSERT INTO public.groups(name, owner_id)
+    VALUES (group_name, auth.uid())
+    RETURNING id INTO new_id;
+
+    INSERT INTO public.group_members(group_id, user_id)
+    VALUES (new_id, auth.uid());
+
+    RETURN new_id;
+END;
+$$;
+
+-- ============================================================
+-- 9. INVITE TO GROUP
+-- Only the creator can invite.
+-- Friendship is NOT required.
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION public.invite_to_group(
+    target_group UUID,
+    target_user UUID
+)
+RETURNS UUID
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+    new_invitation_id UUID;
+BEGIN
+    IF auth.uid() IS NULL THEN
+        RAISE EXCEPTION 'Sign in required';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM public.groups
+        WHERE id = target_group
+        AND owner_id = auth.uid()
+    ) THEN
+        RAISE EXCEPTION 'Only the group creator can invite users';
+    END IF;
+
+    IF target_user = auth.uid() THEN
+        RAISE EXCEPTION 'Creator is already a member';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM public.group_members
+        WHERE group_id = target_group
+        AND user_id = target_user
+    ) THEN
+        RAISE EXCEPTION 'Already a member';
+    END IF;
+
+    INSERT INTO public.group_invitations(
+        group_id,
+        inviter_id,
+        invitee_id
+    )
+    VALUES (
+        target_group,
+        auth.uid(),
+        target_user
+    )
+    ON CONFLICT (group_id, invitee_id)
+    DO UPDATE SET
+        status = 'pending',
+        inviter_id = EXCLUDED.inviter_id,
+        created_at = NOW(),
+        responded_at = NULL
+    RETURNING id INTO new_invitation_id;
+
+    RETURN new_invitation_id;
+END;
+$$;
+
+-- ============================================================
+-- 10. ACCEPT OR DECLINE GROUP INVITATION
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION public.respond_group_invitation(
+    invitation_id UUID,
+    accept_invite BOOLEAN
+)
+RETURNS VOID
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+    accepted_group UUID;
+BEGIN
+    IF auth.uid() IS NULL THEN
+        RAISE EXCEPTION 'Sign in required';
+    END IF;
+
+    UPDATE public.group_invitations
+    SET status = CASE
+            WHEN accept_invite THEN 'accepted'
+            ELSE 'declined'
+        END,
+        responded_at = NOW()
+    WHERE id = invitation_id
+    AND invitee_id = auth.uid()
+    AND status = 'pending'
+    RETURNING group_id INTO accepted_group;
+
+    IF accepted_group IS NULL THEN
+        RAISE EXCEPTION 'Pending invitation not found';
+    END IF;
+
+    IF accept_invite THEN
+        INSERT INTO public.group_members(group_id, user_id)
+        VALUES (accepted_group, auth.uid())
+        ON CONFLICT DO NOTHING;
+    END IF;
+END;
+$$;
+
+-- ============================================================
+-- 11. LEAVE GROUP / REMOVE MEMBER
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION public.remove_group_member(
+    target_group UUID,
+    target_user UUID
+)
+RETURNS VOID
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = ''
+AS $$
+BEGIN
+    IF auth.uid() IS NULL THEN
+        RAISE EXCEPTION 'Sign in required';
+    END IF;
+
+    IF target_user <> auth.uid()
+    AND NOT EXISTS (
+        SELECT 1
+        FROM public.groups
+        WHERE id = target_group
+        AND owner_id = auth.uid()
+    ) THEN
+        RAISE EXCEPTION 'Not authorized';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM public.groups
+        WHERE id = target_group
+        AND owner_id = target_user
+    ) THEN
+        RAISE EXCEPTION 'Creator must delete the group instead';
+    END IF;
+
+    DELETE FROM public.group_members
+    WHERE group_id = target_group
+    AND user_id = target_user;
+END;
+$$;
+
+-- ============================================================
+-- 12. ENABLE ROW LEVEL SECURITY
+-- ============================================================
+
+ALTER TABLE public.friendships ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.groups ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.group_members ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.group_invitations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.busy_slots ENABLE ROW LEVEL SECURITY;
+
+-- ============================================================
+-- 13. SECURITY POLICIES
+-- ============================================================
+
+CREATE POLICY "participants read friendships"
+ON public.friendships
+FOR SELECT TO authenticated
+USING (
+    auth.uid() IN (requester_id, addressee_id)
+);
+
+CREATE POLICY "members read groups"
+ON public.groups
+FOR SELECT TO authenticated
+USING (
+    public.is_group_member(id, auth.uid())
+    OR public.is_group_invitee(id, auth.uid())
+);
+
+CREATE POLICY "owners edit groups"
+ON public.groups
+FOR UPDATE TO authenticated
+USING (owner_id = auth.uid())
+WITH CHECK (owner_id = auth.uid());
+
+CREATE POLICY "owners delete groups"
+ON public.groups
+FOR DELETE TO authenticated
+USING (owner_id = auth.uid());
+
+CREATE POLICY "members read membership"
+ON public.group_members
+FOR SELECT TO authenticated
+USING (
+    public.is_group_member(group_id, auth.uid())
+);
+
+CREATE POLICY "participants read invitations"
+ON public.group_invitations
+FOR SELECT TO authenticated
+USING (
+    invitee_id = auth.uid()
+    OR public.is_group_member(group_id, auth.uid())
+    OR public.is_group_invitee(group_id, auth.uid())
+);
+
+-- Friends and group members can see busy/free availability.
+-- This includes clicking a group member's profile.
+CREATE POLICY "allowed users read busy slots"
+ON public.busy_slots
+FOR SELECT TO authenticated
+USING (
+    user_id = auth.uid()
+    OR public.are_friends(auth.uid(), user_id)
+    OR public.shares_group(auth.uid(), user_id)
+);
+
+-- ============================================================
+-- 14. PERMISSIONS
+-- ============================================================
+
+REVOKE ALL ON
+    public.friendships,
+    public.groups,
+    public.group_members,
+    public.group_invitations,
+    public.busy_slots
+FROM anon;
+
+GRANT SELECT ON
+    public.friendships,
+    public.groups,
+    public.group_members,
+    public.group_invitations,
+    public.busy_slots
+TO authenticated;
+
+GRANT UPDATE, DELETE ON public.groups TO authenticated;
+
+REVOKE ALL ON FUNCTION
+    public.are_friends(UUID, UUID),
+    public.shares_group(UUID, UUID),
+    public.is_group_member(UUID, UUID),
+    public.is_group_invitee(UUID, UUID)
+FROM PUBLIC;
+
+GRANT EXECUTE ON FUNCTION
+    public.are_friends(UUID, UUID),
+    public.shares_group(UUID, UUID),
+    public.is_group_member(UUID, UUID),
+    public.is_group_invitee(UUID, UUID)
+TO authenticated;
+
+REVOKE ALL ON FUNCTION
+    public.send_friend_request(TEXT),
+    public.respond_friend_request(UUID, BOOLEAN),
+    public.create_group(TEXT),
+    public.invite_to_group(UUID, UUID),
+    public.respond_group_invitation(UUID, BOOLEAN),
+    public.remove_group_member(UUID, UUID)
+FROM PUBLIC;
+
+GRANT EXECUTE ON FUNCTION
+    public.send_friend_request(TEXT),
+    public.respond_friend_request(UUID, BOOLEAN),
+    public.create_group(TEXT),
+    public.invite_to_group(UUID, UUID),
+    public.respond_group_invitation(UUID, BOOLEAN),
+    public.remove_group_member(UUID, UUID)
+TO authenticated;
