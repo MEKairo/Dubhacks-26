@@ -1,9 +1,10 @@
-﻿import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import AvailabilityCalendar from '../components/AvailabilityCalendar.jsx';
 import { people, groupColors } from '../data/demo.js';
 import { isFree } from '../lib/availability.js';
 import { defaultTimeline, timelineSummary } from '../lib/workPolicy.js';
 import NoteEditor from './NoteEditor.jsx';
+import { comparisonMembers } from '../lib/comparison.js';
 
 const getPerson = id => people.find(person => person.id === id);
 function Avatar({ person, small = false }) { return <span className={`person-avatar ${small ? 'small-avatar' : ''}`} style={{ background: person?.color }} aria-label={person?.name ? `${person.name} avatar` : 'Your avatar'}>{person?.initials || 'You'}</span>; }
@@ -15,11 +16,15 @@ export default function SocialApp({ route, demo, setDemo, profile, setProfile, t
   const [navOpen, setNavOpen] = useState(false);
   const leaveRef = React.useRef(null);
   const [inspectedSlot, setInspectedSlot] = useState(null);
+  const [noteSelections, setNoteSelections] = useState([]);
+  const [profileSelections, setProfileSelections] = useState({});
+  const [friendSearch, setFriendSearch] = useState('');
   const [timeline, setTimeline] = useState({ ...defaultTimeline });
   useEffect(() => {
     drawerRef.current?.close();
     leaveRef.current?.close();
     setInspectedSlot(null);
+    setFriendSearch('');
   }, [route, theme]);
   const [query, setQuery] = useState('');
   const [searched, setSearched] = useState(false);
@@ -42,6 +47,16 @@ export default function SocialApp({ route, demo, setDemo, profile, setProfile, t
   const friend = person && demo.friends.includes(person.id);
   const requestSent = person && demo.requests.includes(person.id);
   const coworkerGroup = person && demo.groups.find(item => item.mode === 'work' && item.joined && item.active.includes(person.id));
+  const noteMembers = comparisonMembers(demo.friends, work ? [] : noteSelections);
+  const extraFriends = profileSelections[id] || [];
+  const profileMembers = comparisonMembers(demo.friends, work ? [] : extraFriends, person?.id);
+  const comparisonTitle = ids => ids.map(memberId => memberId === 'me' ? 'You' : getPerson(memberId).name.split(' ')[0]).join(' + ');
+  function toggleNote(personId) {
+    setNoteSelections(previous => previous.includes(personId) ? previous.filter(item => item !== personId) : [...previous, personId]);
+  }
+  function toggleComparison(personId) {
+    setProfileSelections(previous => ({ ...previous, [id]: extraFriends.includes(personId) ? extraFriends.filter(item => item !== personId) : [...extraFriends, personId] }));
+  }
   function requestFriend(personId) {
     setDemo(previous => ({ ...previous, requests: [...new Set([...previous.requests, personId])] }));
   }
@@ -93,7 +108,7 @@ export default function SocialApp({ route, demo, setDemo, profile, setProfile, t
       {section === 'note' && (work ? <section className="surface"><h1>Activity notes are in Social mode.</h1><a href="#calendar">Back to calendar</a></section> : <NoteEditor profile={profile} setProfile={setProfile} />)}
       {section === 'calendar' && <>
         <PageHeading eyebrow={work ? 'AVAILABILITY OVERVIEW' : 'A LITTLE ROOM FOR GOOD THINGS'} title={work ? 'My workspace' : profile.name ? `Your time, ${profile.name}.` : 'Make room for a moment.'}><a className="secondary-button button-link" href="#profile">Edit my profile ↗</a></PageHeading>
-        <div className={`dashboard-layout ${work ? 'work-dashboard' : ''}`}><div><div className="sync-preview">○ Calendar connection pending <a href="#profile">Link your calendar →</a></div><AvailabilityCalendar title="My calendar" /></div>{!work && <aside className="activity-panel"><h2>This week, together</h2><p className="description">A reason to reach out. Take the conversation wherever you like.</p><a className="secondary-button button-link" href="#note">Write an activity note ↗</a>{profile.note && (!profile.noteExpiresAt || profile.noteExpiresAt > now) && <article className="wish-card"><small>YOUR NOTE · {profile.noteDuration === 'forever' ? 'UNTIL REMOVED' : profile.noteDuration === 'day' ? 'ONE DAY' : 'ONE WEEK'}</small><p>{profile.note}</p><a className="text-button" href="#note">Edit note →</a></article>}<div className="friends-notes" aria-label="Friends activity notes">{friends.map(member => <article className="wish-card" key={member.id}><a href={`#person/${member.id}`}><Avatar person={member} small /><strong>{member.name.split(' ')[0]}</strong></a><p>{member.note}</p><a className="text-button" href={`#person/${member.id}`}>Find time together →</a></article>)}</div></aside>}</div>
+        <div className={`dashboard-layout ${work ? 'work-dashboard' : ''}`}><div><div className="sync-preview">○ Calendar connection pending <a href="#profile">Link your calendar →</a></div><AvailabilityCalendar title={noteMembers.length > 1 ? comparisonTitle(noteMembers) : 'My calendar'} memberIds={noteMembers} /></div>{!work && <aside className="activity-panel"><h2>This week, together</h2><p className="description">A reason to reach out. Take the conversation wherever you like.</p><a className="secondary-button button-link" href="#note">Write an activity note ↗</a>{profile.note && (!profile.noteExpiresAt || profile.noteExpiresAt > now) && <article className="wish-card"><small>YOUR NOTE · {profile.noteDuration === 'forever' ? 'UNTIL REMOVED' : profile.noteDuration === 'day' ? 'ONE DAY' : 'ONE WEEK'}</small><p>{profile.note}</p><a className="text-button" href="#note">Edit note →</a></article>}<div className="comparison-toolbar"><span>{noteSelections.length} selected</span><button className="text-button" disabled={!noteSelections.length} onClick={() => setNoteSelections([])}>Deselect all</button></div><p className="comparison-hint">Select friends to compare your free time. No group or invitation needed.</p><div className="friends-notes" aria-label="Friends activity notes">{friends.map(member => <article className={`wish-card ${noteSelections.includes(member.id) ? 'selected-note' : ''}`} key={member.id}><div className="note-person-row"><a href={`#person/${member.id}`}><Avatar person={member} small /><strong>{member.name.split(' ')[0]}</strong></a><input type="checkbox" aria-label={`Include ${member.name} in calendar comparison`} checked={noteSelections.includes(member.id)} onChange={() => toggleNote(member.id)} /></div><p>{member.note}</p><a className="text-button" href={`#person/${member.id}`}>Find time together →</a></article>)}</div></aside>}</div>
       </>}
       {section === 'people' && work && <section className="surface empty-state"><h1>Company directory</h1><p>Company-wide discovery is planned for a later version. For now, open a work group to view its members.</p><a className="primary-button button-link" href="#groups">Open work groups →</a></section>}
       {section === 'people' && !work && <>
@@ -129,14 +144,9 @@ export default function SocialApp({ route, demo, setDemo, profile, setProfile, t
       </> : <section className="surface empty-state"><h1>This group isn’t in your circles.</h1><a href="#groups">Back to my groups</a></section>)}
       {section === 'person' && (person ? <>
         <a className="back-link" href="#people">← My people</a>
-        {friend ? <><section className="surface friend-profile"><Avatar person={person} /><div><p className="eyebrow">YOUR FRIEND</p><h1>{person.name}</h1><p className="username">@{person.username}</p><p>{person.bio}</p><div className="preview-tags">{person.interests.map(interest => <span key={interest}>{interest}</span>)}</div>{!work && <p className="friend-note">This week: “{person.note}”</p>}</div></section><p className="privacy-note">Compare your availability below, then reach out off-platform to make a plan.</p><AvailabilityCalendar key={`${person.id}-${theme}`} memberIds={['me', person.id]} title={`You + ${person.name.split(' ')[0]}`} timeline={work ? coworkerGroup?.timeline || defaultTimeline : undefined} /></> : <section className="surface locked-profile"><Avatar person={person} />{work && coworkerGroup && <>{person.companyEmail && <a href={`mailto:${person.companyEmail}`}>{person.companyEmail}</a>}{person.workInterests && <div className="preview-tags">{person.interests.map(interest => <span key={interest}>{interest}</span>)}</div>}</>}<button className="primary-button" disabled={requestSent} onClick={() => requestFriend(person.id)}>{requestSent ? 'Friend request sent' : 'Send friend request'}</button></section>}
+        {friend ? <><section className="surface friend-profile"><Avatar person={person} /><div><p className="eyebrow">YOUR FRIEND</p><h1>{person.name}</h1><p className="username">@{person.username}</p><p>{person.bio}</p><div className="preview-tags">{person.interests.map(interest => <span key={interest}>{interest}</span>)}</div>{!work && <p className="friend-note">This week: “{person.note}”</p>}</div></section><p className="privacy-note">Compare your availability below, then reach out off-platform to make a plan.</p><div className={`friend-comparison-layout ${work ? 'work-comparison' : ''}`}><AvailabilityCalendar key={`${person.id}-${theme}`} memberIds={profileMembers} title={comparisonTitle(profileMembers)} timeline={work ? coworkerGroup?.timeline || defaultTimeline : undefined} />{!work && <aside className="activity-panel friend-comparison-panel"><h2>Make it a few of us</h2><p className="description">Compare friends’ availability, then make the plan off-platform.</p><p className="pinned-friend">You + {person.name.split(' ')[0]} are always included.</p><label htmlFor="comparison-search" className="sr-only">Search your friends</label><input id="comparison-search" type="search" placeholder="Search your friends…" value={friendSearch} onChange={event => setFriendSearch(event.target.value)} /><div className="comparison-toolbar"><span>{extraFriends.length} added</span><button className="text-button" disabled={!extraFriends.length} onClick={() => setProfileSelections(previous => ({ ...previous, [id]: [] }))}>Deselect all</button></div><div className="comparison-friends">{friends.filter(member => `${member.name} ${member.username}`.toLowerCase().includes(friendSearch.trim().toLowerCase())).map(member => <label key={member.id} className="comparison-friend"><Avatar person={member} small /><span>{member.name}<small>{member.id === person.id ? 'Always included' : `@${member.username}`}</small></span><input type="checkbox" aria-label={`Include ${member.name} in comparison`} checked={member.id === person.id || extraFriends.includes(member.id)} disabled={member.id === person.id} onChange={() => toggleComparison(member.id)} /></label>)}{!friends.some(member => `${member.name} ${member.username}`.toLowerCase().includes(friendSearch.trim().toLowerCase())) && <p className="privacy-note" role="status">No friends match that search.</p>}</div></aside>}</div></> : <section className="surface locked-profile"><Avatar person={person} />{work && coworkerGroup && <>{person.companyEmail && <a href={`mailto:${person.companyEmail}`}>{person.companyEmail}</a>}{person.workInterests && <div className="preview-tags">{person.interests.map(interest => <span key={interest}>{interest}</span>)}</div>}</>}<button className="primary-button" disabled={requestSent} onClick={() => requestFriend(person.id)}>{requestSent ? 'Friend request sent' : 'Send friend request'}</button></section>}
       </> : <section className="surface empty-state"><h1>Profile not found.</h1><a href="#people">Back to my people</a></section>)}
       
     </div>
   </main>;
 }
-
-
-
-
-

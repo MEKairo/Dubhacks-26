@@ -401,10 +401,10 @@ select:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
 
 /* Smooth paper lift: curl toward the viewer, detach, then drift down. */
 .calendar-cover { transform-origin: 50% 0; }
-.is-open .calendar-cover { animation: lift-and-tear .9s cubic-bezier(.32,0,.38,1) forwards; }
+.is-open .calendar-cover { animation: lift-and-tear .9s cubic-bezier(.3,.05,.55,1) forwards; transform-origin: 100% 0; }
 @keyframes lift-and-tear {
-  from { transform: translate3d(0,0,0) rotateX(0) rotate(0); opacity: 1; }
-  to { transform: translate3d(-15px,620px,100px) rotateX(55deg) rotate(-4deg); opacity: 0; visibility: hidden; }
+  from { transform: translate3d(0,0,0) rotateX(0) rotate(0); }
+  to { transform: translate3d(150%,80%,70px) rotateX(22deg) rotate(28deg); visibility: hidden; }
 }
 /* Work uses clean typography and flat, functional surfaces. */
 .theme-work { --display-font: 'DM Sans', sans-serif; --logo-font: 'DM Sans', sans-serif; background-image: none; }
@@ -548,3 +548,31 @@ select:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
 .theme-social .moment-logo { font-weight: 500; letter-spacing: -.7px; }
 .theme-social .logo-large { letter-spacing: -3px; text-shadow: 2px 2px var(--shadow); }
 .window-controls .minimize-control i { width: 9px; height: 2px; background: currentColor; transform: translateY(3px); }
+
+/* Temporary friend comparisons: no group membership or invitations. */
+.note-person-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.note-person-row > a { display: flex; align-items: center; gap: 9px; text-decoration: none; font-size: 12px; min-width: 0; }
+.selected-note { border-color: var(--accent); background: var(--selected); }
+.comparison-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-shrink: 0; font-size: 10px; padding: 4px 0; }
+.comparison-toolbar button { font-size: 10px; }
+.comparison-toolbar button:disabled { text-decoration: none; }
+.comparison-hint { font-size: 10px; line-height: 1.7; color: var(--muted); margin: 3px 0 14px; }
+.friend-comparison-layout { display: grid; grid-template-columns: minmax(0,1fr) 260px; gap: 24px; align-items: start; }
+.work-comparison { grid-template-columns: minmax(0,1fr); }
+.friend-comparison-panel { max-height: 650px; }
+.friend-comparison-panel > input { flex-shrink: 0; }
+.pinned-friend { background: var(--selected); padding: 10px; font-size: 10px; line-height: 1.7; margin: 0 0 14px; }
+.comparison-friends { min-height: 0; overflow-y: auto; max-height: 400px; overscroll-behavior: contain; scrollbar-width: thin; }
+.comparison-friend { display: flex; align-items: center; gap: 9px; padding: 14px 0; border-bottom: 1px solid var(--line); font-size: 11px; cursor: pointer; }
+.comparison-friend > span:not(.person-avatar) { min-width: 0; overflow-wrap: anywhere; }
+.comparison-friend small { display: block; font-size: 9px; color: var(--muted); margin-top: 5px; }
+.comparison-friend input { margin-left: auto; }
+@media(max-width:900px) { .friend-comparison-layout { grid-template-columns: 1fr; } .friend-comparison-panel { max-height: 550px; } }
+
+/* Use the same roomy date header in personal and comparison calendars. */
+.hour-grid, .calendar-page .hour-grid { grid-template-rows: 54px repeat(var(--slots), var(--slot-height)); }
+.day-heading, .calendar-page .day-heading { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; padding: 6px 0 8px; line-height: 1; }
+.day-heading span, .calendar-page .day-heading span { margin: 0; line-height: 1; }
+.day-heading b, .calendar-page .day-heading b { display: block; font-size: 17px; line-height: 1; }
+/* Keep the paper opaque; the jagged top separates from the bound stub. */
+.is-open .calendar-cover { opacity: 1; clip-path: polygon(0 1%, 5% 0, 10% 1%, 15% 0, 20% 1%, 25% 0, 30% 1%, 35% 0, 40% 1%, 45% 0, 50% 1%, 55% 0, 60% 1%, 65% 0, 70% 1%, 75% 0, 80% 1%, 85% 0, 90% 1%, 95% 0, 100% 1%, 100% 100%, 0 100%); filter: drop-shadow(-5px 10px 9px #00000020); }

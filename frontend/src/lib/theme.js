@@ -9,6 +9,7 @@ export function themeTokens(color) {
     '--accent': mix(color, 0, .55),
     '--accent-soft': mix(color, 255, .65),
     '--selected': mix(color, 255, .87),
+    '--mark': mix(color, 255, .65),
     '--desktop': mix(color, 255, .91),
     '--dot': mix(color, 255, .67),
     '--surface': mix(color, 255, .97),

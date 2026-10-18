@@ -60,3 +60,9 @@ Check work-window rules with `node --test src/lib/workPolicy.test.js` from `fron
 Day/week grids use a shared 24px default half-hour height rather than squeezing 24 hours into the viewport. Full-day calendars open around 8am, and times outside the viewport remain available through internal scrolling. The bottom-right zoom slider scales time blocks from 75% to 200%, preserving the scroll position in time. Work sharing windows still constrain the visible days/hours.
 
 The header color picker sets separate Social and Work colors in session state. `src/lib/theme.js` derives surface/accent tokens; the selected color also controls personal and one-to-one calendars. Group calendars retain their assigned group colors. Friend notes scroll vertically inside their panel instead of extending the laptop page.
+
+## Temporary friend comparisons
+
+In Social mode, check friends' note cards to overlay their availability on your main calendar. Deselect all restores just your calendar. On a friend's profile, the right panel searches your friends by name/username and adds/removes their calendars. The original friend and you remain included when clearing additions. These comparisons do not create groups or send invitations, and only existing friends can be added. Work behavior is unchanged.
+
+`src/lib/comparison.js` builds the member lists. Run `node --test src/lib/comparison.test.js src/lib/workPolicy.test.js` from `frontend/` to verify selection reset and work-window rules.
