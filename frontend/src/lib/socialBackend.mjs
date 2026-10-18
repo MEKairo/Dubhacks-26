@@ -55,15 +55,21 @@ export function socialBackend(client) {
       const profiles = [];
       for (let i = 0; i < ids.length; i += 100) profiles.push(...await readRows(() => client.from('profiles')
         .select('id,username,display_name,avatar_url').in('id', ids.slice(i, i + 100)).order('id')));
+      const notes = await readRows(() => client.from('activity_notes').select('user_id,body,duration,expires_at').order('user_id'));
+      const ownNote = notes.find(n => n.user_id === userId);
       const ownDetails = await unwrap(client.rpc('get_profile_details', { target_user: userId }));
       const ownProfile = Array.isArray(ownDetails) ? ownDetails[0] : ownDetails;
       // Other users' protected interests are exposed only by the privacy-aware RPC.
       const people = await Promise.all(profiles.filter(p => p.id !== userId).map(async row => {
         const details = await unwrap(client.rpc('get_profile_details', { target_user: row.id }));
-        return profilePerson({ ...row, ...(Array.isArray(details) ? details[0] : details) });
+        const person = profilePerson({ ...row, ...(Array.isArray(details) ? details[0] : details) });
+        const note = notes.find(n => n.user_id === row.id);
+        return { ...person, note: note?.body || '' };
       }));
       return { social: socialSnapshot(userId, { friendships, groups, members, invitations }),
-        people, profile: ownProfile || profiles.find(p => p.id === userId) || null };
+        people, profile: { ...(ownProfile || profiles.find(p => p.id === userId) || {}),
+          note: ownNote?.body || '', noteDuration: ownNote?.duration || 'week',
+          noteExpiresAt: ownNote?.expires_at ? new Date(ownNote.expires_at).getTime() : null } };
     },
     async search(username) {
       const exact = username.trim().replace(/^@/, '');
@@ -91,6 +97,16 @@ export function socialBackend(client) {
     leaveGroup(groupId, userId) {
       return unwrap(client.rpc('remove_group_member', { target_group: groupId, target_user: userId }));
     },
+    async saveNote(userId, body, duration) {
+      const trimmed = body.trim();
+      if (trimmed.length > 180) throw new Error('Note must be 180 characters or less.');
+      if (!['day','week','forever'].includes(duration)) throw new Error('Invalid note duration.');
+      if (!trimmed) return unwrap(client.from('activity_notes').delete().eq('user_id', userId));
+      const expires = duration === 'forever' ? null : new Date(Date.now() + (duration === 'day' ? 1 : 7) * 86400000).toISOString();
+      return unwrap(client.from('activity_notes').upsert({
+        user_id: userId, body: trimmed, duration, expires_at: expires, updated_at: new Date().toISOString(),
+      }, { onConflict: 'user_id' }));
+    },
     saveProfile(userId, profile) {
       const changes = {
         display_name: (profile.name || '').trim(),
@@ -104,7 +120,8 @@ export function socialBackend(client) {
         const username = profile.username.trim().replace(/^@/, '');
         if (username && !/^[a-zA-Z0-9._-]{3,30}$/.test(username))
           throw new Error('Username must be 3–30 characters (letters, numbers, dots, underscores or hyphens).');
-        changes.username = username || null;
+        if (!username) throw new Error('Choose a username to continue.');
+        changes.username = username;
       }
       return unwrap(client.from('profiles').update(changes)
         .eq('id', userId).select('id,display_name').single());
