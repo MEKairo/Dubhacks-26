@@ -20,11 +20,16 @@ export function useLiveAvailability(start, end, memberIds) {
       const result = Object.fromEntries(ids.map(id => [id, { busy: [], coverage: [] }]));
       const otherIds = ids.filter(id => id !== 'me');
       if (otherIds.length) {
-        const slots = await readRows(() => supabase.from('busy_slots').select('id,user_id,starts_at,ends_at')
-          .in('user_id', otherIds).lt('starts_at', new Date(until).toISOString())
-          .gt('ends_at', new Date(from).toISOString()).order('id'));
+        const [slots, coverage] = await Promise.all([
+          readRows(() => supabase.from('busy_slots').select('id,user_id,starts_at,ends_at')
+            .in('user_id', otherIds).lt('starts_at', new Date(until).toISOString())
+            .gt('ends_at', new Date(from).toISOString()).order('id')),
+          readRows(() => supabase.from('busy_sync_coverage').select('id,user_id,starts_at,ends_at')
+            .in('user_id', otherIds).lt('starts_at', new Date(until).toISOString())
+            .gt('ends_at', new Date(from).toISOString()).order('id')),
+        ]);
         for (const slot of slots) result[slot.user_id]?.busy.push({ start: slot.starts_at, end: slot.ends_at });
-        // The backend has no sync-coverage metadata, so empty intervals are unknown.
+        for (const range of coverage) result[range.user_id]?.coverage.push({ start: range.starts_at, end: range.ends_at });
       }
       let warning = '';
       if (ids.includes('me')) {
@@ -38,6 +43,14 @@ export function useLiveAvailability(start, end, memberIds) {
               const data = await getMyBusyTimes(new Date(cursor).toISOString(), new Date(end).toISOString(), selected);
               result.me.busy.push(...data.busy);
               result.me.coverage.push({ start: new Date(cursor).toISOString(), end: new Date(end).toISOString() });
+              // Publish busy intervals only, never event titles or Google access tokens.
+              // A failed publication must not hide the owner's successfully loaded calendar.
+              const { error: publishError } = await supabase.rpc('publish_my_busy_times', {
+                p_start: new Date(cursor).toISOString(),
+                p_end: new Date(end).toISOString(),
+                p_busy: data.busy.map(({ start, end }) => ({ start, end })),
+              });
+              if (publishError) warning = 'Your calendar loaded, but sharing with friends failed: ' + publishError.message;
             }
           } catch (e) { result.me = { busy: [], coverage: [] }; warning = e.message; }
         } else warning = 'Connect Google Calendar in your profile to load your availability.';
