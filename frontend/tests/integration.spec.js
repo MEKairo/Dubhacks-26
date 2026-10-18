@@ -162,3 +162,25 @@ test('Google connection links the existing identity and exposes configuration er
   await expect(page.getByText('Manual linking is disabled', { exact: true })).toBeVisible();
   expect(identityRequest).toBe(true);
 });
+
+test('Connect shows progress and redirects the current tab to Google', async ({ page }) => {
+  await mockBackend(page);
+  await page.route('**/auth/v1/user/identities/authorize?**', async route => {
+    await new Promise(resolve => setTimeout(resolve, 500));
+    return route.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify({ url: 'https://accounts.google.com/test-consent' }) });
+  });
+  await page.route('https://accounts.google.com/test-consent', route => route.fulfill({
+    contentType: 'text/html', body: '<h1>Google consent test</h1>',
+  }));
+  await login(page);
+  await page.goto('/#profile');
+  await page.getByRole('button', { name: /^Connect/ }).click();
+  await expect(page.getByText('Opening Google sign-in in this tab…')).toBeVisible();
+  await expect(page).toHaveURL('https://accounts.google.com/test-consent');
+});
+test('Explore clearly explains why Connect cannot start without sign-in', async ({ page }) => {
+  await page.goto('/#profile');
+  await page.getByRole('button', { name: /^Connect/ }).click();
+  await expect(page.getByText(/Sign in before connecting Google Calendar. Open Welcome screen/)).toBeVisible();
+});

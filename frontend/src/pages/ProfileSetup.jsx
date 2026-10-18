@@ -6,6 +6,7 @@ const interests = ['Climbing', 'Coffee', 'Gym', 'Reading', 'Gaming', 'Hiking', '
 export default function ProfileSetup({ profile, setProfile, theme, onFinish, live, session, error, pending }) {
   const [step, setStep] = useState(1);
   const [notice, setNotice] = useState('');
+  const [connecting, setConnecting] = useState(false);
   const [customInterest, setCustomInterest] = useState('');
   const work = theme === 'work';
   const update = (key, value) => setProfile(previous => ({ ...previous, [key]: value }));
@@ -34,13 +35,16 @@ export default function ProfileSetup({ profile, setProfile, theme, onFinish, liv
           <h2 id="step-title" tabIndex={-1}>{step === 1 ? 'Start with your calendar.' : step === 2 ? 'More than a busy schedule.' : 'You choose what to share.'}</h2>
           {step === 1 && <>
             <p className="description">Keep your availability in one place. Less checking, more making plans.</p>
-            <div className="provider-card"><span className="provider-icon" aria-hidden="true">31</span><div><h3>Google Calendar</h3><p>Your events stay in your calendar.</p></div><button className="secondary-button" type="button" disabled={pending} onClick={async () => {
-              if (!live) { setNotice('Sign in before connecting Google Calendar.'); return; }
+            <div className="provider-card"><span className="provider-icon" aria-hidden="true">31</span><div><h3>Google Calendar</h3><p>Your events stay in your calendar.</p></div><button className="secondary-button" type="button" disabled={connecting} aria-busy={connecting} onClick={async () => {
+              if (!live) { setNotice('Sign in before connecting Google Calendar. Open Welcome screen above and log in; Explore is a preview.'); return; }
+              setConnecting(true);
+              setNotice('Opening Google sign-in in this tab…');
               try {
                 sessionStorage.setItem('moment:auth-return', 'profile');
                 await connectGoogleCalendar();
               } catch (error) { setNotice(error.message); }
-            }}>Connect <span aria-hidden="true">↗</span></button></div>
+              finally { setConnecting(false); }
+            }}>{connecting ? 'Connecting…' : session?.provider_token ? 'Reconnect' : 'Connect'} <span aria-hidden="true">↗</span></button></div>
             <p className="privacy-note">You’ll choose what others can see. Availability only is the default; event titles and details stay private.</p>
             <div className="coming-soon"><span>Apple Calendar & other calendars</span><span className="badge">Coming later</span></div>
             <p className="inline-notice" role="status">{notice || error || (session?.provider_token ? 'Google Calendar connected. Availability is loaded on your calendar.' : 'Connect Google to read busy times only.')}</p>

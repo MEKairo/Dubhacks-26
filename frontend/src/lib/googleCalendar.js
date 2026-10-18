@@ -11,13 +11,18 @@ export async function connectGoogleCalendar() {
       scopes: 'https://www.googleapis.com/auth/calendar.freebusy https://www.googleapis.com/auth/calendar.calendarlist.readonly',
       redirectTo: window.location.origin,
       queryParams: { prompt: 'consent' },
+      skipBrowserRedirect: true,
     },
   };
   const needsLink = session && !session.user.identities?.some(identity => identity.provider === 'google');
-  const { error } = needsLink
+  const { data, error } = needsLink
     ? await supabase.auth.linkIdentity(request)
     : await supabase.auth.signInWithOAuth(request);
   if (error) throw error;
+  if (!data?.url) throw new Error('Google sign-in did not return a redirect URL. Check the Supabase Google provider settings.');
+  const redirect = new URL(data.url);
+  if (redirect.protocol !== 'https:') throw new Error('Google sign-in returned an invalid redirect URL.');
+  window.location.assign(redirect.href);
 }
 
 async function callCalendar(body) {

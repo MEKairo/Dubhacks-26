@@ -69,7 +69,7 @@ For an email/password user, Google Connect uses auth.linkIdentity, requiring Sup
 Authentication's manual identity linking setting. If disabled, the existing status area
 shows the error instead of silently switching accounts.
 Grant calendar.freebusy and calendar.calendarlist.readonly, and deploy the updated
-google-freebusy function from gcal-sync. Its ALLOWED_ORIGINS must include the frontend
+google-freebusy function from this integration branch. Its ALLOWED_ORIGINS must include the frontend
 origin. Google provider-token expiration requires reconnecting; Supabase session refresh
 does not refresh Google provider tokens.
 
@@ -86,9 +86,11 @@ is still required, including stranger access denial and expired Google consent.
 
 From frontend:
 - npm test — existing comparison/work-policy tests plus social mapping/RPC/error/timezone tests
-- npm run test:browser — seven browser flows using mocked Supabase responses
+- npm run test:browser — nine browser flows using mocked Supabase responses
 - npm run build — production bundle
 
 Browser checks use installed Chrome; configure playwright.config.js's channel for CI.
 The test server runs on 127.0.0.1:5174 and does not require adding a real OAuth redirect.
 No new styles were introduced; frontend/src/styles.css and lib/theme.js match Emily's commit.
+
+Calendar consolidation: this branch now includes supabase/functions, the Calendar tests, and their helper modules from gcal-sync. Emily''s UI and all database SQL are preserved. The Connect button uses its own progress state and explicit current-tab redirect rather than waiting for unrelated backend data loading.
