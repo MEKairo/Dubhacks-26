@@ -7,6 +7,10 @@ export default defineConfig({
     viewport: { width: 1280, height: 900 } },
   webServer: {
     command: (process.platform === 'win32' ? 'npm.cmd' : 'npm') + ' run dev -- --host 127.0.0.1 --port 5174 --strictPort',
-    url: 'http://127.0.0.1:5174', reuseExistingServer: !process.env.CI,
+    url: 'http://127.0.0.1:5174', reuseExistingServer: false,
+    env: {
+      VITE_SUPABASE_URL: 'https://moment-test.supabase.co',
+      VITE_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_mock_for_browser_tests',
+    },
   },
 });

@@ -9,7 +9,7 @@ export async function connectGoogleCalendar() {
     provider: 'google',
     options: {
       scopes: 'https://www.googleapis.com/auth/calendar.freebusy https://www.googleapis.com/auth/calendar.calendarlist.readonly',
-      redirectTo: window.location.origin,
+      redirectTo: new URL('./', window.location.href).href,
       queryParams: { prompt: 'consent' },
       skipBrowserRedirect: true,
     },

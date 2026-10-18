@@ -1,4 +1,4 @@
-﻿@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Pixelify+Sans:wght@400;500;600&family=Pacifico&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Pixelify+Sans:wght@400;500;600&family=Pacifico&display=swap');
 
 /* Change these tokens to update the Social palette. */
 :root {
@@ -576,3 +576,17 @@ select:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
 .day-heading b, .calendar-page .day-heading b { display: block; font-size: 17px; line-height: 1; }
 /* Keep the paper opaque; the jagged top separates from the bound stub. */
 .is-open .calendar-cover { opacity: 1; clip-path: polygon(0 1%, 5% 0, 10% 1%, 15% 0, 20% 1%, 25% 0, 30% 1%, 35% 0, 40% 1%, 45% 0, 50% 1%, 55% 0, 60% 1%, 65% 0, 70% 1%, 75% 0, 80% 1%, 85% 0, 90% 1%, 95% 0, 100% 1%, 100% 100%, 0 100%); filter: drop-shadow(-5px 10px 9px #00000020); }
+
+/* Readable text across every generated palette, including selected surfaces. */
+.app .social-heading .eyebrow, .calendar-page .social-heading .eyebrow, .app .cover-center .eyebrow { display: block; font-size: 13px; line-height: 1.6; letter-spacing: 1px; font-weight: 600; color: var(--ink); }
+.app .cover-description { font-family: var(--display-font); font-size: 18px; font-weight: 500; line-height: 1.65; color: var(--ink); }
+.app input::placeholder, .app textarea::placeholder { color: var(--muted); opacity: 1; }
+.app button:disabled { opacity: 1; color: var(--muted); }
+.app .theme-work .primary-button:disabled, .theme-work .primary-button:disabled { color: #fff; }
+.app .month-grid button.outside-month { opacity: 1; color: var(--muted); background: var(--selected); }
+.app .app-footer, .app .cover-topline, .app .preview-note, .app .privacy-note, .app .demo-label, .app .profile-footnote, .app .window-footer, .app .calendar-legend, .app .slot-detail, .app .timeline-summary, .app .comparison-hint, .app .member-availability, .app .calendar-navigation > span, .app .comparison-toolbar, .app .wish-card > small { font-size: 12px; line-height: 1.6; }
+.app .description, .app .text-button, .app .auth-sheet label, .app .profile-fields label { font-size: 13px; }
+.app .hour-label, .app .day-heading span, .app .month-label, .app .availability-cell small, .app .member-pill small, .app .comparison-friend small { font-size: 11px; }
+.app .person-avatar { color: var(--ink); }
+
+@media(max-width:520px) { .app .app-header { flex-wrap: wrap; } .app .appearance-controls { flex-wrap: wrap; gap: 10px; max-width: 100%; } }

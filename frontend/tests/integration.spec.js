@@ -16,13 +16,14 @@ async function mockBackend(page, { incoming = false } = {}) {
     { id: newcomer, username: 'new_user', display_name: 'New Person', avatar_url: null },
   ];
   const tables = { friendships: [{ id: 'friend-1', requester_id: me, addressee_id: bob, status: 'accepted' }],
-    groups: [], group_members: [], group_invitations: [], busy_slots: [] };
+    groups: [], group_members: [], group_invitations: [], busy_slots: [], busy_sync_coverage: [], activity_notes: [] };
   if (incoming) tables.friendships.push({ id: 'incoming-1', requester_id: newcomer, addressee_id: me, status: 'pending' });
   await page.route('https://*.supabase.co/**', async route => {
     const request = route.request();
     const url = new URL(request.url());
     const reply = body => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
-    if (url.pathname === '/auth/v1/token') return reply({
+    if (url.pathname === '/auth/v1/logout') return route.fulfill({ status: 204 });
+    if (url.pathname === '/auth/v1/token' || url.pathname === '/auth/v1/signup') return reply({
       access_token: token, refresh_token: 'mock-refresh', expires_in: 3600, token_type: 'bearer', user,
     });
     if (url.pathname === '/auth/v1/user') return reply(user);
@@ -30,6 +31,7 @@ async function mockBackend(page, { incoming = false } = {}) {
       const name = url.pathname.split('/').pop();
       const args = request.postDataJSON();
       calls.push({ name, args });
+      if (name === 'get_profile_details') return reply(profiles.find(profile => profile.id === args.target_user) || null);
       if (name === 'send_friend_request') {
         tables.friendships.push({ id: 'outgoing', requester_id: me, addressee_id: newcomer, status: 'pending' });
         return reply('outgoing');
@@ -71,7 +73,7 @@ async function login(page) {
   await page.getByLabel('Password', { exact: true }).fill('test-password');
   await page.getByRole('button', { name: /Open my calendar/ }).click();
   await expect(page).toHaveURL(/#calendar$/);
-  await expect(page.getByText('Your time, Alice.')).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Good (morning|afternoon|evening), Alice\./ })).toBeVisible();
 }
 test('login loads real people, exact search and friend request use the existing backend', async ({ page }) => {
   const calls = await mockBackend(page);
@@ -113,7 +115,7 @@ test('unsupported work group policies do not create fake backend groups', async 
   await expect(page.getByText('Work-group modes and sharing windows are not supported by the backend yet. Nothing was saved.')).toBeVisible();
   expect(calls.some(call => call.name === 'create_group')).toBe(false);
 });
-test('profile saves only supported display name; unsynced availability is unknown', async ({ page }) => {
+test('profile saves supported fields; unsynced availability is unknown', async ({ page }) => {
   const calls = await mockBackend(page);
   await login(page);
   await page.goto('/#profile');
@@ -123,7 +125,10 @@ test('profile saves only supported display name; unsynced availability is unknow
   await page.getByRole('button', { name: /Sharing choices/ }).click();
   await page.getByRole('button', { name: /Open my calendar/ }).click();
   await expect(page).toHaveURL(/#calendar$/);
-  expect(calls.find(call => call.name === 'save-profile').args).toEqual({ display_name: 'Alice Updated' });
+  expect(calls.find(call => call.name === 'save-profile').args).toEqual({
+    display_name: 'Alice Updated', username: 'alice', bio: 'Local-only bio', interests: [],
+    availability_visibility: 'private', show_interests: true, work_social: false,
+  });
   await expect(page.locator('.availability-cell').first()).toHaveAttribute('aria-label', /availability unknown/);
 });
 
@@ -179,8 +184,113 @@ test('Connect shows progress and redirects the current tab to Google', async ({ 
   await expect(page.getByText('Opening Google sign-in in this tab…')).toBeVisible();
   await expect(page).toHaveURL('https://accounts.google.com/test-consent');
 });
-test('Explore clearly explains why Connect cannot start without sign-in', async ({ page }) => {
+test('signed-out private routes return to authentication without demo access', async ({ page }) => {
   await page.goto('/#profile');
-  await page.getByRole('button', { name: /^Connect/ }).click();
-  await expect(page.getByText(/Sign in before connecting Google Calendar. Open Welcome screen/)).toBeVisible();
+  await expect(page).toHaveURL(/#welcome$/);
+  await expect(page.getByRole('button', { name: 'Let’s find the time.' })).toBeVisible();
+  await page.getByRole('button', { name: 'Let’s find the time.' }).click();
+  await expect(page.getByRole('button', { name: /Explore/ })).toHaveCount(0);
+  await expect(page.getByText('Maya Chen')).toHaveCount(0);
+});
+
+test('signup leads to setup and completing it opens the calendar', async ({ page }) => {
+  const calls = await mockBackend(page);
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Let’s find the time.' }).click();
+  await page.getByLabel('Email address').fill('test@example.com');
+  await page.getByLabel('Password', { exact: true }).fill('test-password');
+  await page.getByRole('button', { name: /Create account & set up profile/ }).click();
+  await expect(page).toHaveURL(/#profile$/);
+  await page.getByRole('button', { name: /Your sharing choices/ }).click();
+  await page.getByRole('button', { name: /Open my calendar/ }).click();
+  await expect(page).toHaveURL(/#calendar$/);
+  expect(calls.some(call => call.name === 'save-profile')).toBe(true);
+});
+
+test('email confirmation does not bypass authentication', async ({ page }) => {
+  await mockBackend(page);
+  await page.route('**/auth/v1/signup**', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ user, session: null }),
+  }));
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Let’s find the time.' }).click();
+  await page.getByLabel('Email address').fill('test@example.com');
+  await page.getByLabel('Password', { exact: true }).fill('test-password');
+  await page.getByRole('button', { name: /Create account & set up profile/ }).click();
+  await expect(page.getByRole('status')).toHaveText('Check your email to confirm your account, then log in.');
+  await expect(page.getByRole('link', { name: 'My people', exact: true })).toHaveCount(0);
+});
+
+test('session survives refresh and sign-out closes access to private screens', async ({ page }) => {
+  await mockBackend(page);
+  await login(page);
+  await page.reload();
+  await expect(page.getByRole('heading', { name: /Good (morning|afternoon|evening), Alice\./ })).toBeVisible();
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expect(page).toHaveURL(/#welcome$/);
+  await page.goto('/#calendar');
+  await expect(page).toHaveURL(/#welcome$/);
+  await expect(page.getByRole('button', { name: 'Let’s find the time.' })).toBeVisible();
+});
+
+async function visibleTextContrastFailures(page) {
+  return page.evaluate(() => {
+    const rgb = value => (value.match(/[\d.]+/g) || []).map(Number);
+    const over = (front, back) => {
+      const alpha = front[3] ?? 1;
+      return [0,1,2].map(index => front[index] * alpha + back[index] * (1 - alpha));
+    };
+    const luminance = channels => channels.map(channel => {
+      const value = channel / 255;
+      return value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4;
+    }).reduce((sum, value, index) => sum + value * [.2126,.7152,.0722][index], 0);
+    const failures = [];
+    const walker = document.createTreeWalker(document.querySelector('.app'), NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      if (!node.textContent.trim()) continue;
+      const element = node.parentElement;
+      if (element.closest('script,style')) continue;
+      const style = getComputedStyle(element);
+      if (style.visibility !== 'visible') continue;
+      const range = document.createRange(); range.selectNode(node);
+      const rect = range.getBoundingClientRect();
+      const x = Math.max(0, Math.min(innerWidth - 1, rect.x + rect.width / 2));
+      const y = Math.max(0, Math.min(innerHeight - 1, rect.y + rect.height / 2));
+      if (!rect.width || !rect.height || rect.bottom < 0 || rect.top > innerHeight) continue;
+      const hit = document.elementFromPoint(x,y);
+      if (!hit || !(element.contains(hit) || hit.contains(element))) continue;
+      const ancestors = [];
+      for (let parent = element; parent; parent = parent.parentElement) ancestors.unshift(parent);
+      let background = [255,255,255];
+      for (const parent of ancestors) background = over(rgb(getComputedStyle(parent).backgroundColor), background);
+      const foreground = over(rgb(style.color), background);
+      const a = luminance(foreground), b = luminance(background);
+      const ratio = (Math.max(a,b) + .05) / (Math.min(a,b) + .05);
+      if (ratio < 4.5) failures.push({ text: node.textContent.trim().slice(0,60), ratio, color: style.color, background });
+    }
+    return failures;
+  });
+}
+
+test('theme extremes keep visible cover and calendar writing readable in both modes', async ({ page }) => {
+  await mockBackend(page);
+  await page.goto('/');
+  for (const mode of ['Social','Work']) {
+    await page.getByRole('button', { name: mode, exact: true }).click();
+    for (const color of ['#000000','#ffffff','#ff0000','#00ff00','#0000ff']) {
+      await page.getByLabel(`${mode} theme and personal calendar color`).fill(color);
+      expect(await visibleTextContrastFailures(page)).toEqual([]);
+    }
+  }
+  await page.getByRole('button', { name: 'Social', exact: true }).click();
+  await login(page);
+  await expect(page.getByText('MAKE TIME FOR WHAT MATTERS', { exact: true })).toBeVisible();
+  for (const mode of ['Social','Work']) {
+    await page.getByRole('button', { name: mode, exact: true }).click();
+    for (const color of ['#000000','#ffffff','#ff0000','#00ff00','#0000ff']) {
+      await page.getByLabel(`${mode} theme and personal calendar color`).fill(color);
+      expect(await visibleTextContrastFailures(page)).toEqual([]);
+    }
+  }
 });

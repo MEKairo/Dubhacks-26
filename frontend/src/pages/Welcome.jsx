@@ -3,7 +3,7 @@ import MomentLogo from '../components/MomentLogo.jsx';
 import { pacificToday } from '../lib/dates.js';
 import { addDays, startOfWeek } from '../lib/availability.js';
 
-export default function Welcome({ theme, onContinue, onExplore }) {
+export default function Welcome({ theme, onContinue }) {
   const [opened, setOpened] = useState(false);
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState('');
@@ -42,8 +42,7 @@ export default function Welcome({ theme, onContinue, onExplore }) {
               <label htmlFor="password">Password</label><input id="password" name="password" type="password" placeholder="At least 8 characters" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} minLength={8} required />
               <button className="primary-button" type="submit" disabled={pending}>{mode === 'signup' ? 'Create account & set up profile' : 'Open my calendar'} <span aria-hidden="true">→</span></button>
             </form>
-            <p className="preview-note" role="status">{notice || (pending ? 'Signing in…' : 'Sign in securely, or explore the frontend preview below.')}</p>
-            <button className="text-button" type="button" onClick={() => onExplore(mode)}>{mode === 'login' ? 'Explore the calendar →' : 'Explore profile setup →'}</button>
+            <p className="preview-note" role="status">{notice || (pending ? mode === 'signup' ? 'Creating your account…' : 'Signing in…' : 'Your people, your plans. Sign in to find the time.')}</p>
             <button className="text-button back-cover" type="button" onClick={() => setOpened(false)}>← Back to the cover</button>
           </div>
           <div className="calendar-cover" aria-hidden={opened} inert={opened ? true : undefined}>

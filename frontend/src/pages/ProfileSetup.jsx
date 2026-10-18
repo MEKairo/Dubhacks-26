@@ -23,7 +23,7 @@ export default function ProfileSetup({ profile, setProfile, theme, onFinish, liv
 
   return (
     <main className="profile-stage">
-      <div className="profile-top-links"><a href="#calendar" className="back-link">← My calendar</a><a href="#welcome" className="back-link">Welcome screen</a></div>
+      <div className="profile-top-links"><a href="#calendar" className="back-link">← My calendar</a></div>
       <div className="profile-heading"><p className="eyebrow">A LITTLE INTRODUCTION</p><h1>Make yourself at home.</h1><p className="description">Your time, your interests, your kind of connection.</p></div>
       <div className="setup-layout">
         <aside className="setup-sidebar">
