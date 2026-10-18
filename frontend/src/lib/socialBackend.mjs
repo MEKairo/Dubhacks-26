@@ -2,7 +2,7 @@ export const emptySocial = () => ({ friends: [], requests: [], groups: [], notif
 export function profilePerson(row) {
   const name = row.display_name || row.username || 'Member';
   return { id: row.id, name, username: row.username || '', initials: name.split(/\s+/).map(p => p[0]).slice(0, 2).join(''),
-    avatarUrl: row.avatar_url, interests: [], bio: '', note: '' };
+    avatarUrl: row.avatar_url, interests: Array.isArray(row.interests) ? row.interests : [], bio: row.bio || '', note: '' };
 }
 export function socialSnapshot(userId, rows) {
   const me = id => id === userId ? 'me' : id;
@@ -55,8 +55,15 @@ export function socialBackend(client) {
       const profiles = [];
       for (let i = 0; i < ids.length; i += 100) profiles.push(...await readRows(() => client.from('profiles')
         .select('id,username,display_name,avatar_url').in('id', ids.slice(i, i + 100)).order('id')));
+      const ownDetails = await unwrap(client.rpc('get_profile_details', { target_user: userId }));
+      const ownProfile = Array.isArray(ownDetails) ? ownDetails[0] : ownDetails;
+      // Other users' protected interests are exposed only by the privacy-aware RPC.
+      const people = await Promise.all(profiles.filter(p => p.id !== userId).map(async row => {
+        const details = await unwrap(client.rpc('get_profile_details', { target_user: row.id }));
+        return profilePerson({ ...row, ...(Array.isArray(details) ? details[0] : details) });
+      }));
       return { social: socialSnapshot(userId, { friendships, groups, members, invitations }),
-        people: profiles.filter(p => p.id !== userId).map(profilePerson), profile: profiles.find(p => p.id === userId) || null };
+        people, profile: ownProfile || profiles.find(p => p.id === userId) || null };
     },
     async search(username) {
       const exact = username.trim().replace(/^@/, '');
@@ -85,7 +92,21 @@ export function socialBackend(client) {
       return unwrap(client.rpc('remove_group_member', { target_group: groupId, target_user: userId }));
     },
     saveProfile(userId, profile) {
-      return unwrap(client.from('profiles').update({ display_name: profile.name.trim() })
+      const changes = {
+        display_name: (profile.name || '').trim(),
+        bio: (profile.bio || '').trim(),
+        interests: Array.isArray(profile.interests) ? profile.interests : [],
+        availability_visibility: ['groups', 'friends', 'private'].includes(profile.availability) ? profile.availability : 'private',
+        show_interests: Boolean(profile.showInterests),
+        work_social: Boolean(profile.workSocial),
+      };
+      if (profile.username !== undefined) {
+        const username = profile.username.trim().replace(/^@/, '');
+        if (username && !/^[a-zA-Z0-9._-]{3,30}$/.test(username))
+          throw new Error('Username must be 3–30 characters (letters, numbers, dots, underscores or hyphens).');
+        changes.username = username || null;
+      }
+      return unwrap(client.from('profiles').update(changes)
         .eq('id', userId).select('id,display_name').single());
     },
   };
