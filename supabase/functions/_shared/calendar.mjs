@@ -55,30 +55,95 @@ export function findSharedAvailability(busyByMember, windows, minimumMinutes = 3
   return available;
 }
 
-export async function fetchPrimaryBusy(token, timeMin, timeMax, fetcher = fetch) {
-  validateRange(timeMin, timeMax);
+function validateToken(token) {
   if (typeof token !== 'string' || !token || token.length > 8192) {
     throw new CalendarError('Reconnect Google Calendar.', 401);
   }
-  const response = await fetcher('https://www.googleapis.com/calendar/v3/freeBusy', {
-    method: 'POST',
+}
+function validateCalendarId(id) {
+  if (typeof id !== 'string' || id.length > 1024 ||
+      (id !== 'primary' && !/^[^\s/?#]+@[^\s/?#]+$/.test(id))) {
+    throw new CalendarError('Provide a valid Google Calendar ID.');
+  }
+  return id;
+}
+async function googleRequest(url, token, options = {}, fetcher = fetch) {
+  validateToken(token);
+  const response = await fetcher(url, {
+    ...options,
     headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ timeMin, timeMax, items: [{ id: 'primary' }] }),
     signal: AbortSignal.timeout(15000),
   });
   if (response.status === 401) throw new CalendarError('Google access expired. Reconnect Google Calendar.', 401);
-  if (response.status === 403) throw new CalendarError('Enable Calendar API and grant calendar.freebusy permission.', 403);
+  if (response.status === 403) throw new CalendarError('Reconnect Google Calendar and grant calendar list and free/busy permissions.', 403);
+  if (response.status === 404) throw new CalendarError('Calendar not found in your Google account.', 404);
   if (response.status === 429) throw new CalendarError('Google is busy. Try again shortly.', 429);
   if (!response.ok) throw new CalendarError('Google Calendar could not be reached.', 502);
-  const result = await response.json();
-  const calendar = result.calendars?.primary;
-  // Missing/error calendars must never be interpreted as an entirely free calendar.
-  if (!calendar || calendar.errors?.length || !Array.isArray(calendar.busy)) {
-    throw new CalendarError('Google could not read this calendar. Availability is unknown.', 502);
+  return response.json();
+}
+
+export async function verifyOwnedCalendar(token, id, fetcher = fetch) {
+  validateCalendarId(id);
+  const calendar = await googleRequest(
+    'https://www.googleapis.com/calendar/v3/users/me/calendarList/' + encodeURIComponent(id),
+    token, {}, fetcher,
+  );
+  if (calendar.accessRole !== 'owner' || calendar.deleted) {
+    throw new CalendarError('Only calendars you own can be linked.', 403);
   }
-  const busy = calendar.busy.map(({ start, end }) => {
-    validateRange(start, end);
-    return { start, end };
-  });
-  return { timeMin, timeMax, busy };
+  validateCalendarId(calendar.id);
+  return { id: calendar.id, name: calendar.summaryOverride || calendar.summary || calendar.id,
+    primary: Boolean(calendar.primary), timeZone: calendar.timeZone || null };
+}
+
+export function mergeBusyIntervals(intervals) {
+  const ordered = intervals.map(({ start, end }) => validateRange(start, end))
+    .sort((a, b) => a.start - b.start);
+  const merged = [];
+  for (const interval of ordered) {
+    const last = merged[merged.length - 1];
+    if (last && interval.start <= last.end) last.end = Math.max(last.end, interval.end);
+    else merged.push({ ...interval });
+  }
+  return merged.map(({ start, end }) => ({
+    start: new Date(start).toISOString(), end: new Date(end).toISOString(),
+  }));
+}
+
+async function fetchBusy(token, timeMin, timeMax, ids, fetcher = fetch) {
+  validateRange(timeMin, timeMax);
+  const result = await googleRequest('https://www.googleapis.com/calendar/v3/freeBusy', token, {
+    method: 'POST',
+    body: JSON.stringify({ timeMin, timeMax, calendarExpansionMax: 50, items: ids.map(id => ({ id })) }),
+  }, fetcher);
+  const intervals = [];
+  for (const id of ids) {
+    const calendar = result.calendars?.[id];
+    if (!calendar || calendar.errors?.length || !Array.isArray(calendar.busy)) {
+      throw new CalendarError('A selected calendar could not be read. Availability is unknown.', 502);
+    }
+    for (const block of calendar.busy) {
+      if (!block || typeof block !== 'object') throw new CalendarError('Invalid calendar response.', 502);
+      validateRange(block.start, block.end);
+      intervals.push({ start: block.start, end: block.end });
+    }
+  }
+  return { timeMin, timeMax, busy: intervals };
+}
+
+// Legacy primary-only adapter retained for older callers.
+export async function fetchPrimaryBusy(token, timeMin, timeMax, fetcher = fetch) {
+  return fetchBusy(token, timeMin, timeMax, ['primary'], fetcher);
+}
+
+export async function fetchOwnedBusy(token, timeMin, timeMax, calendarIds, fetcher = fetch) {
+  validateRange(timeMin, timeMax);
+  if (!Array.isArray(calendarIds) || !calendarIds.length || calendarIds.length > 20) {
+    throw new CalendarError('Select between 1 and 20 linked calendars.');
+  }
+  calendarIds.forEach(validateCalendarId);
+  const calendars = await Promise.all([...new Set(calendarIds)].map(id => verifyOwnedCalendar(token, id, fetcher)));
+  const ids = [...new Set(calendars.map(calendar => calendar.id))];
+  const result = await fetchBusy(token, timeMin, timeMax, ids, fetcher);
+  return { ...result, calendarIds: ids, busy: mergeBusyIntervals(result.busy) };
 }

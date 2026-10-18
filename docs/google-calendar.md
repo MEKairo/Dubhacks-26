@@ -1,66 +1,103 @@
 # Google Calendar integration
 
-This branch includes Emily's React + Vite scaffold, a Google sign-in/Calendar consent button,
-an authenticated Supabase Edge Function that reads the caller's Google primary calendar busy
-intervals, and a tested shared-availability utility. No event creation or event details are requested.
+## What works locally
 
-## Configure once Supabase exists
+The React screen connects Google, accepts Google Calendar browser/share URLs or Calendar
+IDs, verifies owner access server-side, and lets the user enable/remove linked calendars.
+Queries combine selected calendars' busy intervals, merging duplicates, overlaps, and
+adjacent blocks. If any selected calendar cannot be read, the entire query fails rather
+than incorrectly marking the user as free.
 
-1. Create the Supabase project. Enable Google in Authentication > Sign In / Providers.
-2. Enter the Google Web Client ID and secret there, never in React.
-3. Copy the callback URL shown by Supabase (typically https://PROJECT.supabase.co/auth/v1/callback)
-   into Google Auth Platform > Clients > Dubhacks Web Client > Authorized redirect URIs.
-   Use the displayed Supabase URL, not a guessed localhost callback.
-4. In Supabase Authentication > URL Configuration, set Site URL to http://localhost:5173 for
-   development and allow that redirect URL. Add production URLs when deploying.
-5. Keep Google Audience in Testing and add each tester. Keep calendar.freebusy in Data Access.
-   Supabase's Google provider also needs the standard openid, email, and profile permissions.
-6. Copy frontend/.env.example to frontend/.env.local and fill in the project URL and public
-   anon key from Supabase. Never put the Google secret or Supabase service role key in VITE_ variables.
-7. Deploy the function using Supabase CLI after login/link:
-   supabase functions deploy google-freebusy
-   The function validates the user's bearer token using auth.getUser; keep gateway JWT verification
-   enabled for legacy JWT keys. If your project uses newer signing keys that the gateway does not
-   support, disable gateway verification only after confirming the handler's getUser validation.
-8. Set ALLOWED_ORIGINS as an Edge Function secret to your frontend origin.
-   Default: http://localhost:5173. Multiple origins may be comma separated.
-9. Run npm install and npm run dev inside frontend. Connect Google Calendar, then click
-   Check my next 7 days. Confirm busy blocks match a known event in the primary calendar.
+Google Calendar's owner access role is the eligibility rule. It establishes management
+access, not historical proof of who originally created the calendar.
+No event details or calendar write permissions are requested.
 
-## Contract for frontend/backend teammates
+Calendar selections are saved in browser localStorage keyed by Supabase user ID.
+This is a temporary frontend adapter, not database/profile persistence or cross-device sync.
+Google tokens are never included in that selection storage.
 
-POST /functions/v1/google-freebusy with the Supabase session bearer token and JSON:
-{ "googleAccessToken": "<session.provider_token>", "timeMin": "<RFC3339>", "timeMax": "<RFC3339>" }
+## Required project setup
 
-Returns { timeMin, timeMax, busy: [{ start, end }] }. Maximum query range: 31 days.
-Google tokens must not be logged. Busy data is returned only to the requesting browser and
-is not persisted. Missing calendar data is an error, never silently interpreted as free time.
+1. Enable Google Calendar API in Google Cloud.
+2. Google Auth Platform > Data Access must include:
+   - https://www.googleapis.com/auth/calendar.freebusy
+   - https://www.googleapis.com/auth/calendar.calendarlist.readonly
+   Standard openid/email/profile permissions are also needed for Supabase Google login.
+3. Keep the OAuth app in Testing and add each tester under Audience.
+4. Enable Google sign-in in Supabase; enter the Google client ID/secret there.
+   Add the callback URL displayed by Supabase to the Google Web Client redirect URIs.
+5. Allow the React URL in Supabase Authentication > URL Configuration.
+   Current local URL: http://127.0.0.1:5173/
+6. Copy frontend/.env.example to frontend/.env.local and set the Supabase URL and publishable
+   key. Legacy VITE_SUPABASE_ANON_KEY is also accepted. Never use secret/service-role keys
+   or Google client secrets in VITE_ settings. Restart Vite after environment changes.
+7. Redeploy google-freebusy from the updated gcal-sync code, including _shared/calendar.mjs:
+   npx supabase functions deploy google-freebusy --project-ref YOUR_PROJECT_REF
+8. Set ALLOWED_ORIGINS to the frontend origin, with no trailing slash:
+   npx supabase secrets set ALLOWED_ORIGINS=http://127.0.0.1:5173 --project-ref YOUR_PROJECT_REF
+   Multiple origins can be comma separated. The handler normalizes trailing slashes.
+9. Reconnect Google Calendar and approve calendar-list and free/busy permissions.
+   Old provider tokens do not automatically gain newly requested scopes.
 
-findSharedAvailability(busyByMember, windows, minimumMinutes) in
-supabase/functions/_shared/calendar.mjs merges members' busy intervals and returns free
-intervals within explicit non-overlapping working windows. All selected members must have
-successfully fetched data. Build windows with timezone-aware dates; do not assume UTC
-working hours match the user's timezone.
+The handler authenticates every request via Supabase auth.getUser. Gateway JWT
+verification must match your project's signing-key configuration; do not remove the
+handler's user verification. No database migrations are needed for this function.
 
-## Current boundaries
+## Browser link input
 
-This is an interactive primary-calendar integration, not background sync. Google provider
-access tokens expire independently of Supabase sessions. Reconnect when prompted.
-Refresh tokens are not requested or stored. Later, a backend-owned connection flow and
-private encrypted token storage can support syncing while friends are offline.
-Do not put Google refresh tokens into a public profiles table.
+Supported: Calendar ID, calendar.google.com/calendar/... with src=<calendar ID>,
+and browser share links with cid=<base64 calendar ID>. www.google.com/calendar links
+are also accepted. URLs are parsed locally; the backend calls only Google's fixed API
+endpoints, never an arbitrary supplied URL.
+Secret/private iCal feeds, .ics URLs, and event links are rejected.
+Get a calendar's ID or share link from Google Calendar Settings > Settings for my calendars.
 
-Friend/group authorization and persisted availability are intentionally left for the team's
-backend schema. A group endpoint must verify the caller's membership or friendship before
-reading anyone else's availability. This endpoint accepts no friend IDs.
-Only the primary calendar is included; multi-calendar selection needs a separate design
-and potentially additional permissions.
+## Backend API
+
+All requests are POST /functions/v1/google-freebusy, with the signed-in Supabase session
+bearer token and the project's public key. Google access tokens must not be logged.
+
+Link/verify request:
+{ action: "link", googleAccessToken, calendarId }
+
+Response:
+{ calendar: { id, name, primary, timeZone } }
+
+Busy request:
+{ googleAccessToken, timeMin, timeMax, calendarIds: ["primary", "ID@group.calendar.google.com"] }
+
+Response:
+{ timeMin, timeMax, calendarIds: ["canonical IDs"], busy: [{ start, end }] }
+
+There must be 1–20 selected IDs and at most a 31-day range. Owner access is rechecked
+for all IDs on each read. Only selected IDs are fetched. No IDs means primary for legacy
+callers; an explicitly empty list is an error. Older deployed functions must be updated
+before multi-calendar reads; the frontend checks for the new response shape.
+
+## Contract for Alex/Harley
+
+Database ownership stays with the backend team. Replace linkedCalendars.mjs's browser
+storage adapter with backend-owned storage when ready.
+Suggested linked-calendar fields: user_id, calendar_id, display_name, enabled.
+Only owners of a profile should edit its settings. Verify Google owner access on the
+server when linking, and revalidate on sync; never trust a browser's claim of ownership.
+No Google credentials belong in public profiles or linked-calendar rows.
+
+The Calendar function currently returns busy intervals without persisting busy_slots.
+Background sync, encrypted refresh-token storage, and friends/group aggregation still
+need backend integration. Empty/stale/missing synced data must not imply free time.
+
+findSharedAvailability in _shared/calendar.mjs combines successfully fetched members'
+busy intervals within explicit working windows. Membership/friendship authorization
+must precede access to any other user's availability.
 
 ## Verification
 
-From repository root: node --test tests/calendar.test.mjs
-From frontend: npm run build
+node --test tests/calendar.test.mjs tests/calendar-dates.test.mjs tests/multiple-calendars.test.mjs
+npm --prefix frontend run build
 
-Tests cover overlapping busy blocks, working-hour clipping, minimum meeting duration,
-missing member data, invalid query windows, provider failures, and the Google API contract.
-Live OAuth and Edge Function deployment require the team's Supabase project and Google credentials.
+For a live test, link two owned calendars. Put overlapping Busy events on both. Check the
+range: overlaps should appear as one block. Disable one calendar and query again to
+confirm its unique blocks disappear. All toggles off must disable queries.
+Moving a real event and querying again should change the result.
+Live testing requires the redeployed function, new scopes, and Google consent.

@@ -1,8 +1,8 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { CalendarError, fetchPrimaryBusy } from '../_shared/calendar.mjs';
+import { CalendarError, fetchOwnedBusy, verifyOwnedCalendar } from '../_shared/calendar.mjs';
 
 Deno.serve(async (req: Request) => {
-  const allowedOrigins = (Deno.env.get('ALLOWED_ORIGINS') || 'http://localhost:5173').split(',').map(s => s.trim());
+  const allowedOrigins = (Deno.env.get('ALLOWED_ORIGINS') || 'http://localhost:5173').split(',').map(s => s.trim().replace(/\/+$/, ''));
   const origin = req.headers.get('origin');
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -27,10 +27,12 @@ Deno.serve(async (req: Request) => {
     let body;
     try { body = await req.json(); } catch { return reply({ error: 'Send a JSON request body.' }, 400); }
     if (!body || typeof body !== 'object') return reply({ error: 'Send a JSON object.' }, 400);
-    const { googleAccessToken, timeMin, timeMax } = body;
+    const { googleAccessToken, timeMin, timeMax, action, calendarId, calendarIds } = body;
     // This endpoint returns only data authorized by the supplied Google token.
     // It accepts no friend IDs and writes no tokens or calendar data to the database.
-    return reply(await fetchPrimaryBusy(googleAccessToken, timeMin, timeMax));
+    if (action === 'link') return reply({ calendar: await verifyOwnedCalendar(googleAccessToken, calendarId) });
+    if (action !== undefined) return reply({ error: 'Unknown calendar action.' }, 400);
+    return reply(await fetchOwnedBusy(googleAccessToken, timeMin, timeMax, calendarIds === undefined ? ['primary'] : calendarIds));
   } catch (error) {
     if (error instanceof CalendarError) return reply({ error: error.message }, error.status);
     return reply({ error: 'Calendar request failed. Try again shortly.' }, 502);
