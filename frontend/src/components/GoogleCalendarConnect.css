@@ -1,0 +1,16 @@
+.calendar-test-page { max-width: 64rem; margin: 0 auto; padding: clamp(1rem, 4vw, 3rem); }
+.calendar-panel { margin-top: 2rem; display: grid; gap: 1.5rem; }
+.calendar-panel h2, .calendar-panel h3 { margin: 0 0 .5rem; }
+.calendar-panel p { line-height: 1.6; margin: .5rem 0; }
+.calendar-connection { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; padding: 1rem; border: 1px solid currentColor; border-radius: .75rem; }
+.calendar-connection > div { flex: 1 1 16rem; }
+.calendar-panel button { cursor: pointer; min-height: 2.75rem; padding: .6rem 1rem; }
+.calendar-panel button:disabled { cursor: default; }
+.calendar-panel fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.calendar-panel legend { font-weight: 600; margin-bottom: .75rem; }
+.calendar-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 1rem; }
+.calendar-controls label { display: grid; gap: .4rem; flex: 1 1 12rem; min-width: 0; }
+.calendar-controls input { min-width: 0; min-height: 2.75rem; padding: .5rem; }
+.calendar-busy-list { list-style: none; padding: 0; margin: 0; display: grid; gap: .75rem; }
+.calendar-busy-list li { display: grid; gap: .35rem; border-inline-start: 3px solid currentColor; padding: .5rem 1rem; }
+.calendar-panel aside { border-top: 1px solid currentColor; padding-top: 1.5rem; }
